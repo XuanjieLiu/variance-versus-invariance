@@ -1,0 +1,8 @@
+
+1. Don't run code on the login node. Apply for computation resources instead.
+salloc -N 1 --gres=gpu:1 --mem=32G
+
+2. activate my conda env:
+conda activate xuanjie
+
+3.use 'exit' to release the computation resources after use.

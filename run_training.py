@@ -30,7 +30,7 @@ if __name__ == "__main__":
 
     # Update config with additional arguments
     for key, value in additional_args.items():
-        value = int(value) if value.isdigit() else value
+        value = yaml.safe_load(value)
         if "." in key:
             key1, key2 = key.split(".")
             config[key1][key2] = value

@@ -74,6 +74,9 @@ class Typography:
         bg=(255, 255, 255),
         translate=False,
         jitter=False,
+        font_size=None,
+        fit_to_bbox=False,
+        margin=2,
     ):
         """
         convert a character to a maybe-binary matrix using the size information and the given font
@@ -89,10 +92,15 @@ class Typography:
         patch = Image.new("RGB", (w, h), bg)
         draw = ImageDraw.Draw(patch)
         # load a font
-        fnt = ImageFont.truetype(font, h)  # some fonts are too tall
+        fnt = ImageFont.truetype(font, font_size or h)  # some fonts are too tall
         # get the size of the text
-        text_w = draw.textlength(char, fnt)
-        text_h = h
+        if fit_to_bbox:
+            left, top, right, bottom = fnt.getbbox(char)
+            text_w = right - left
+            text_h = bottom - top
+        else:
+            text_w = draw.textlength(char, fnt)
+            text_h = h
         if self.verbose:
             print(f"Text size: {text_w}x{text_h}")
         # maybe jitter the text color
@@ -100,7 +108,17 @@ class Typography:
             fg = np.array(fg) + np.random.randint(-2, 3, 3)
             fg = tuple(np.clip(fg, 0, 255))
         # draw the text
-        if translate:
+        if fit_to_bbox:
+            shift_x, shift_y = 0, 0
+            if translate:
+                shift_x = np.random.uniform(-1, 1)
+                shift_y = np.random.uniform(-1, 1)
+            x = (w - text_w) / 2 - left + shift_x
+            y = (h - text_h) / 2 - top + shift_y
+            x = min(max(x, margin - left), w - margin - right)
+            y = min(max(y, margin - top), h - margin - bottom)
+            draw.text((x, y), char, font=fnt, fill=fg)
+        elif translate:
             draw.text(
                 (
                     (w - text_w) // 2 + np.random.random(),
@@ -125,6 +143,9 @@ class Typography:
         bg=(245, 245, 245),
         distortion="color, gaussian, salt, blur, translate",
         grey_scale=False,
+        font_size=None,
+        fit_to_bbox=False,
+        margin=2,
     ):
         # create an image
         canvas = np.ones((self.image_height, self.image_width, 3), dtype=np.uint8) * 255
@@ -161,6 +182,9 @@ class Typography:
                 bg,
                 translate="translate" in distortion,
                 jitter="color" in distortion,
+                font_size=font_size,
+                fit_to_bbox=fit_to_bbox,
+                margin=margin,
             )
             canvas[y : y + self.patch_height, x : x + self.patch_width] = mtx
 

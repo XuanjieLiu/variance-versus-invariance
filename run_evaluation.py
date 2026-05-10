@@ -13,6 +13,18 @@ if __name__ == "__main__":
     parser.add_argument("--zero_shot_ood", action="store_true")
     parser.add_argument("--few_shot_ood", action="store_true")
     parser.add_argument(
+        "--test_subset_size",
+        type=int,
+        default=None,
+        help="Evaluate on a random subset of the test set with this many samples.",
+    )
+    parser.add_argument(
+        "--test_subset_seed",
+        type=int,
+        default=None,
+        help="Random seed used when --test_subset_size is set.",
+    )
+    parser.add_argument(
         "--help",
         action="help",
         help="You can pass any argument from the config file as a command line argument. For example, --optimizer_config.lr 1.0e-3 will set the learning rate to 1.0e-3.",
@@ -35,7 +47,7 @@ if __name__ == "__main__":
 
     # Update config with additional arguments
     for key, value in additional_args.items():
-        value = int(value) if value.isdigit() else value
+        value = yaml.safe_load(value)
         if "." in key:
             key1, key2 = key.split(".")
             config[key1][key2] = value
@@ -47,6 +59,10 @@ if __name__ == "__main__":
     # Set known arguments
     if known_args.debug:
         config["debug"] = True
+    if known_args.test_subset_size is not None:
+        config["test_subset_size"] = known_args.test_subset_size
+    if known_args.test_subset_seed is not None:
+        config["test_subset_seed"] = known_args.test_subset_seed
 
     tester = Tester(config)
     tester.prepare_data()

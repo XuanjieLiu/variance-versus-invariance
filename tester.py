@@ -9,6 +9,7 @@ from sklearn.manifold import TSNE
 from matplotlib import pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
+from torch.utils.data import DataLoader, Subset
 
 from utils.eval_utils import *
 from model.factory import get_model
@@ -32,8 +33,11 @@ class Tester:
         self.output_dir = os.path.dirname(config["active_checkpoint"])
 
         # device
+        self.device = torch.device("cpu")
         if self.config["device"] == "cuda" and torch.cuda.is_available():
             self.device = torch.device("cuda")
+        elif self.config["device"] == "cuda":
+            print("CUDA is not available; falling back to CPU.")
 
     def prepare_data(self):
         config = self.config
@@ -59,12 +63,53 @@ class Tester:
             fragment_len=config["model_config"]["fragment_len"],
             shuffle=False,
         )
+        self._apply_test_subset()
 
         # for totally continuous styles
         if len(self.S_LIST) == 0:
             self.CONTINUOUS_STYLE = True
         else:
             self.CONTINUOUS_STYLE = False
+
+    def _apply_test_subset(self):
+        subset_size = self.config.get("test_subset_size")
+        if subset_size is None or subset_size == "None":
+            return
+
+        subset_size = int(subset_size)
+        if subset_size <= 0:
+            raise ValueError("test_subset_size must be a positive integer.")
+
+        dataset = self.test_loader.dataset
+        dataset_size = len(dataset)
+        actual_size = min(subset_size, dataset_size)
+
+        seed = self.config.get("test_subset_seed", self.config.get("random_seed"))
+        if seed is None or seed == "None":
+            seed = 0
+
+        generator = torch.Generator()
+        generator.manual_seed(int(seed))
+        indices = torch.randperm(dataset_size, generator=generator)[:actual_size]
+        indices = sorted(indices.tolist())
+
+        loader_kwargs = {
+            "batch_size": self.test_loader.batch_size or self.config["batch_size"],
+            "shuffle": False,
+            "num_workers": self.test_loader.num_workers,
+            "collate_fn": self.test_loader.collate_fn,
+            "pin_memory": self.test_loader.pin_memory,
+            "drop_last": False,
+        }
+        if self.test_loader.num_workers > 0:
+            loader_kwargs["prefetch_factor"] = self.test_loader.prefetch_factor
+            loader_kwargs["persistent_workers"] = self.test_loader.persistent_workers
+
+        self.test_loader = DataLoader(Subset(dataset, indices), **loader_kwargs)
+        print(
+            f"Evaluating on {actual_size}/{dataset_size} test samples "
+            f"(test_subset_seed={seed})."
+        )
 
     def build_model(self):
         config = self.config
@@ -78,7 +123,9 @@ class Tester:
             self.model = get_model(config["dataloader"], model_config).to(self.device)
             from model.v3_loss import V3Loss as Loss
 
-        cp_state_dict = torch.load(config["active_checkpoint"])["model"]
+        cp_state_dict = torch.load(
+            config["active_checkpoint"], map_location=self.device
+        )["model"]
 
         self.model.load_state_dict(cp_state_dict, strict=False)
         self.model.eval()
@@ -97,12 +144,16 @@ class Tester:
         self.ground_truth = []  # (input, content_idx, style_idx)
         self.results = []  # (recon, emb_c, emb_c_vq, emb_s)
         self.sample_vq_indices = []  # vq_indices
+        self.confusion_counts = np.zeros(
+            (self.config["model_config"]["n_atoms"], len(self.C_LIST))
+        )
+        keep_full_outputs = pr_metrics or vis_tsne
 
         n_rounds = (
             5 if self.config["model_config"]["n_fragments"] < len(self.C_LIST) else 1
         )  # to make sure more things are covered, as dataloaders might not use all fragments
         for round in range(n_rounds):
-            for i, batch in enumerate(self.test_loader):
+            for i, batch in enumerate(tqdm(self.test_loader, desc="Evaluating")):
                 batch_data, content_idx, style_idx = batch
                 batch_data = batch_data.to(self.device)
 
@@ -110,16 +161,18 @@ class Tester:
                     recon, emb_c, emb_c_vq, vq_indices, vq_commit_loss, emb_s, *rest = (
                         self.model(batch_data)
                     )
-                    losses = self.loss.compute_loss(
-                        recon,
-                        emb_c,
-                        emb_c_vq,
-                        vq_commit_loss,
-                        emb_s,
-                        batch_data,
-                    )
 
                 # detach everything
+                content_idx_np = content_idx.detach().cpu().numpy()
+                vq_indices = vq_indices.detach().cpu().numpy()
+                for atom_idx, content_label in zip(
+                    vq_indices.reshape(-1), content_idx_np.reshape(-1)
+                ):
+                    self.confusion_counts[int(atom_idx), int(content_label)] += 1
+
+                if not keep_full_outputs:
+                    continue
+
                 batch_data = batch_data.detach().cpu().numpy()
                 if not self.CONTINUOUS_STYLE:
                     style_idx = style_idx.detach().cpu().numpy()
@@ -132,7 +185,6 @@ class Tester:
                 recon = recon.detach().cpu().numpy()
                 emb_c = emb_c.detach().cpu().numpy()
                 emb_c_vq = emb_c_vq.detach().cpu().numpy()
-                vq_indices = vq_indices.detach().cpu().numpy()
                 emb_s = emb_s.detach().cpu().numpy()
                 for j in range(emb_c.shape[0]):  # for every sample in the batch
                     for k in range(emb_c.shape[1]):  # for every fragment in the sample
@@ -154,10 +206,16 @@ class Tester:
                     self.sample_vq_indices.append(vq_indices[j])
 
         if pr_metrics:
+            print(
+                f"Computing PR metrics for {len(self.results)} fragments. "
+                "This is O(N^2) and can be very slow on the full test set."
+            )
             self.compute_retrieval_metrics()
         if vis_tsne:
+            print("Computing t-SNE visualization.")
             self.vis_tsne(self.output_dir + "/vis")
         if confusion_mtx:
+            print("Writing confusion matrix.")
             self.confusion_mtx(self.output_dir + "/vis")
         if zero_shot_ood:
             self.zero_shot_ood(self.output_dir + "/ood")
@@ -285,32 +343,8 @@ class Tester:
     def confusion_mtx(self, output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
-        all_content_idx = [x[1] for x in self.ground_truth]
-        all_content_idx = np.array(all_content_idx)
-        all_style_idx = [x[2] for x in self.ground_truth]
-        all_style_idx = np.array(all_style_idx)
-
-        all_emb_c = [x[1] for x in self.results]
-        all_emb_c = np.array(all_emb_c)
-        all_emb_c_vq = [x[2] for x in self.results]
-        all_emb_c_vq = np.array(all_emb_c_vq)
-        all_emb_s = [x[3] for x in self.results]
-        all_emb_s = np.array(all_emb_s)
-
         # plot the confusion matrix of the codebook
-        sample_vq_indices = np.array(self.sample_vq_indices).flatten()
-        confusion_matrix = np.zeros(
-            (
-                self.config["model_config"]["n_atoms"],
-                len(self.C_LIST),
-            )
-        )
-        for i in range(sample_vq_indices.shape[0]):
-            content_idx = int(all_content_idx[i])
-            confusion_matrix[sample_vq_indices[i], content_idx] += 1
-        confusion_matrix = confusion_matrix / (
-            confusion_matrix.sum(axis=1, keepdims=True) + 1e-7
-        )  # normalize
+        confusion_matrix = self._normalized_codebook_confusion_matrix()
         # permute the rows to look like an eye
         codebook_permutation = Tester._get_confusion_matrix_permutation(
             confusion_matrix
@@ -334,6 +368,11 @@ class Tester:
         )
 
         print("Codebook Accuracy:", confusion_mtx_acc(confusion_matrix))
+
+    def _normalized_codebook_confusion_matrix(self):
+        return self.confusion_counts / (
+            self.confusion_counts.sum(axis=1, keepdims=True) + 1e-7
+        )
 
     @staticmethod
     def _get_confusion_matrix_permutation(confusion_matrix):
@@ -428,30 +467,7 @@ class Tester:
 
         # first compute the confusion matrix using original test data
         os.makedirs(output_dir, exist_ok=True)
-        all_content_idx = [x[1] for x in self.ground_truth]
-        all_content_idx = np.array(all_content_idx)
-        all_style_idx = [x[2] for x in self.ground_truth]
-        all_style_idx = np.array(all_style_idx)
-        all_emb_c = [x[1] for x in self.results]
-        all_emb_c = np.array(all_emb_c)
-        all_emb_c_vq = [x[2] for x in self.results]
-        all_emb_c_vq = np.array(all_emb_c_vq)
-        all_emb_s = [x[3] for x in self.results]
-        all_emb_s = np.array(all_emb_s)
-        # plot the confusion matrix of the codebook
-        sample_vq_indices = np.array(self.sample_vq_indices).flatten()
-        confusion_matrix = np.zeros(
-            (
-                self.config["model_config"]["n_atoms"],
-                len(self.C_LIST),
-            )
-        )
-        for i in range(sample_vq_indices.shape[0]):
-            content_idx = int(all_content_idx[i])
-            confusion_matrix[sample_vq_indices[i], content_idx] += 1
-        confusion_matrix = confusion_matrix / (
-            confusion_matrix.sum(axis=1, keepdims=True) + 1e-7
-        )  # normalize
+        confusion_matrix = self._normalized_codebook_confusion_matrix()
         # permute the rows to look like an eye
         codebook_permutation = Tester._get_confusion_matrix_permutation(
             confusion_matrix
@@ -538,30 +554,7 @@ class Tester:
 
         # first compute the confusion matrix using the original test data
         os.makedirs(output_dir, exist_ok=True)
-        all_content_idx = [x[1] for x in self.ground_truth]
-        all_content_idx = np.array(all_content_idx)
-        all_style_idx = [x[2] for x in self.ground_truth]
-        all_style_idx = np.array(all_style_idx)
-        all_emb_c = [x[1] for x in self.results]
-        all_emb_c = np.array(all_emb_c)
-        all_emb_c_vq = [x[2] for x in self.results]
-        all_emb_c_vq = np.array(all_emb_c_vq)
-        all_emb_s = [x[3] for x in self.results]
-        all_emb_s = np.array(all_emb_s)
-        # plot the confusion matrix of the codebook
-        sample_vq_indices = np.array(self.sample_vq_indices).flatten()
-        confusion_matrix = np.zeros(
-            (
-                self.config["model_config"]["n_atoms"],
-                len(self.C_LIST),
-            )
-        )
-        for i in range(sample_vq_indices.shape[0]):
-            content_idx = int(all_content_idx[i])
-            confusion_matrix[sample_vq_indices[i], content_idx] += 1
-        confusion_matrix = confusion_matrix / (
-            confusion_matrix.sum(axis=1, keepdims=True) + 1e-7
-        )  # normalize
+        confusion_matrix = self._normalized_codebook_confusion_matrix()
         # permute the rows to look like an eye
         codebook_permutation = Tester._get_confusion_matrix_permutation(
             confusion_matrix

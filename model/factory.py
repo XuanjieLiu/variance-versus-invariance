@@ -2,7 +2,11 @@ from model.autoencoder import CSAE
 
 
 def get_model(dataloader_name, model_config):
-    if "phonenums" in dataloader_name:
+    if (
+        "phonenums" in dataloader_name
+        or "lowercase_letters" in dataloader_name
+        or "uppercase_letters" in dataloader_name
+    ):
         from model.modules.phonenums import Encoder, Decoder
     elif "insnotes" in dataloader_name:
         from model.modules.insnotes import Encoder, Decoder
