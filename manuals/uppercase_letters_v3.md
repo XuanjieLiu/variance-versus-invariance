@@ -143,7 +143,7 @@ python run_evaluation.py \
 ```bash
 python run_evaluation.py \
   --config cfg_v3_uppercase_letters.yaml \
-  --active_checkpoint ./logs/uppercase_letters_run2_batch32/cp_epoch145.pt \
+  --active_checkpoint ./logs/uppercase_letters_run2_batch32_resume/cp_epoch304.pt \
   --confusion_mtx
 ```
 作用：评估指定 checkpoint 的 content/style disentanglement 表现，并输出 confusion matrix。
