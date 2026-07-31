@@ -11,3 +11,5 @@ __pycache__/
 *.wav
 *.gif
 *.sh
+!/scripts/*.sh
+/slurm_logs/

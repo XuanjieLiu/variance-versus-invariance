@@ -148,6 +148,17 @@ python run_training.py --config <path_to_your_yaml> [--name <experiment_name>] [
 ```
 You can pass additional arguments to quickly overwrite the configuration in the .yaml file.
 
+Each run records every loss component in `loss_history.csv`, stores
+epoch-level means in `loss_epoch_history.csv`, and periodically updates
+`loss_curves.png`. By default, the figure is updated at the validation
+frequency; set `plot_every_n_epochs` in the configuration to override it.
+For runs created by older versions of the trainer, total-loss histories and
+curves can be recovered from `log.txt` with:
+
+```
+python -m utils.backfill_loss_history ./logs
+```
+
 ## 📊 Evaluation
 Fill in the ***active_checkpoint*** field in the configuration .yaml file with the path to the model checkpoint you want to evaluate. Then run the evaluation script, specifying the evaluation items you want to perform:
 ```

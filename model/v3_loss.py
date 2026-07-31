@@ -80,6 +80,7 @@ class V3Loss:
         style_loss = F.relu(r - style_samp_var / (style_frag_var + self.eps)) / r
         sample_loss = F.relu(r - style_samp_var / (content_samp_var + self.eps)) / r
         fragment_loss = F.relu(r - content_frag_var / (style_frag_var + self.eps)) / r
+        v3_loss = content_loss + style_loss + sample_loss + fragment_loss
 
         total_loss = 0
         for k, v in self.config["weights"].items():
@@ -90,6 +91,7 @@ class V3Loss:
 
         losses = {
             "recon_loss": recon_loss,
+            "v3_loss": v3_loss,
             "content_loss": content_loss,
             "style_loss": style_loss,
             "sample_loss": sample_loss,
@@ -189,6 +191,7 @@ class V3Loss:
         else:
             sample_loss = F.relu(r - style_samp_var / (content_samp_var + self.eps)) / r
         fragment_loss = F.relu(r - content_frag_var / (style_frag_var + self.eps)) / r
+        v3_loss = content_loss + style_loss + sample_loss + fragment_loss
 
         total_loss = 0
         for k, v in self.config["weights"].items():
@@ -199,6 +202,7 @@ class V3Loss:
 
         losses = {
             "recon_loss": recon_loss,
+            "v3_loss": v3_loss,
             "style_loss": style_loss,
             "content_loss": content_loss,
             "cross_batch_loss": sample_loss,

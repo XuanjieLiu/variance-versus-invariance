@@ -19,6 +19,7 @@ class CSAE(nn.Module):
         self.vq = VectorQuantize(
             dim=d_emb_c,
             codebook_size=config["n_atoms"],
+            codebook_dim=config.get("vq_codebook_dim"),
             commitment_weight=1,
             decay=config["vq_ema_decay"] if "vq_ema_decay" in config else 0.98,
             kmeans_init=True,

@@ -1,0 +1,62 @@
+log_dir: "./logs"
+wandb: False
+project: "V3"
+name: "uppercase_letters_trial"
+debug: False
+random_seed:
+
+dataloader: "uppercase_letters_dataloader"
+data_dir: "../data/UppercaseLetters"
+method: "V3"
+
+device: "cuda"
+precision: "float32" # float32, float16 or bfloat16
+num_workers: 4
+batch_size: 32
+epochs: 10000 # incremental if load_checkpoint is given
+val_every_n_epochs: 1
+log_every_n_steps: 1
+save_top_k: 3 # based on validation loss
+save_every_n_epochs: 1 # larger or equal to val_frequency
+
+load_checkpoint: None
+active_checkpoint: None
+
+loss_config:
+  weights:
+    recon_loss: 1
+    content_loss: 1
+    style_loss: 1
+    sample_loss: 1
+    fragment_loss: 1
+    commit_loss: 0.1
+  relativity: 15
+
+model_config:
+  n_channels: 256
+  n_fragments: 26
+  fragment_len: 32 # determined by dataloader
+  n_feature: 48 # determined by dataloader
+  d_emb_c: 4
+  d_emb_s: 4
+  n_atoms: 26
+  threshold_ema_dead_code: 16
+  vq_ema_decay: 0.98
+
+optimizer_config:
+  optimizer: "AdamW"
+  lr: 1.0e-3
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1.0e-8
+  momentum: 0.9
+  weight_decay: 0.1
+
+  scheduler: "exponential_decay" # "cosine_annealing", "exponential_decay"
+  lr_anneal_epochs: 100
+  lr_anneal_min_factor: 0.01
+  lr_decay_factor: 0.98
+  lr_decay_epochs: 20
+  lr_decay_min_factor: 0.02
+  warmup_epochs: 0
+  warmup_factor: 0.1

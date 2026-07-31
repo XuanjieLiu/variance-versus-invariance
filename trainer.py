@@ -17,6 +17,7 @@ from torch.cuda.amp import GradScaler
 
 from utils.training_utils import *
 from utils.eval_utils import *
+from utils.loss_logging import LossLogger
 from model.factory import get_model
 
 
@@ -25,8 +26,8 @@ class Trainer:
         # basic configs
         self.config = config
         if self.config["debug"]:
-            self.portion = 1
-            self.config["n_epochs"] = 1
+            self.portion = self.config.get("debug_portion", 0.01)
+            self.config["epochs"] = 1
             self.config["log_every_n_steps"] = 1
             self.config["val_every_n_epochs"] = 1
             self.config["save_every_n_epochs"] = 1
@@ -84,6 +85,7 @@ class Trainer:
 
         # performance history: {epoch: val_loss}
         self.performance_history = {}
+        self.loss_logger = LossLogger(self.log_dir)
 
     def prepare_data(self):
         """
@@ -210,11 +212,14 @@ class Trainer:
         """
         config = self.config
         n_epochs = config["epochs"]
-        global_step = 0
+        global_step = self.start_epoch * len(self.train_loader)
         for epoch in range(self.start_epoch, self.start_epoch + n_epochs):
             # training loop
             self.model.train()
             running_losses_train = {}
+            running_count_train = 0
+            epoch_losses_train = {}
+            epoch_count_train = 0
             for i, (batch_data, c_labels, s_labels) in enumerate(self.train_loader):
                 # Move data to device
                 batch_data = batch_data.to(device=self.device)
@@ -251,22 +256,54 @@ class Trainer:
                 for k, v in losses.items():
                     if k not in running_losses_train:
                         running_losses_train[k] = 0
-                    running_losses_train[k] += v.item()
+                    if k not in epoch_losses_train:
+                        epoch_losses_train[k] = 0
+                    loss_value = v.item()
+                    running_losses_train[k] += loss_value
+                    epoch_losses_train[k] += loss_value
+                running_count_train += 1
+                epoch_count_train += 1
                 # write to log
-                if i % config["log_every_n_steps"] == config["log_every_n_steps"] - 1:
-                    for k, v in running_losses_train.items():
-                        running_losses_train[k] /= config["log_every_n_steps"]
+                is_log_step = (i + 1) % config["log_every_n_steps"] == 0
+                is_last_step = i == len(self.train_loader) - 1
+                if is_log_step or is_last_step:
+                    mean_losses_train = LossLogger.mean(
+                        running_losses_train, running_count_train
+                    )
                     logging.info(
-                        f"TRAIN - Epoch [{epoch}/{n_epochs}], Step [{i}/{len(self.train_loader)}], Loss: {running_losses_train['total_loss']:.4f}"
+                        f"TRAIN - Epoch [{epoch}/{n_epochs}], Step [{i}/{len(self.train_loader)}], "
+                        f"Loss: {mean_losses_train['total_loss']:.4f} | "
+                        f"{LossLogger.format_losses(mean_losses_train)}"
+                    )
+                    self.loss_logger.log_step(
+                        "train",
+                        epoch,
+                        global_step,
+                        i,
+                        mean_losses_train,
+                        self.optimizer.param_groups[0]["lr"],
                     )
                     # write summary for this log cycle
                     if config["wandb"]:
                         self._write_summary(
-                            global_step, epoch, running_losses_train, "train"
+                            global_step, epoch, mean_losses_train, "train"
                         )
                     running_losses_train = {}
+                    running_count_train = 0
+
+            mean_epoch_losses_train = LossLogger.mean(
+                epoch_losses_train, epoch_count_train
+            )
+            self.loss_logger.log_epoch(
+                "train",
+                epoch,
+                global_step,
+                mean_epoch_losses_train,
+                self.optimizer.param_groups[0]["lr"],
+            )
 
             # validation loop
+            running_losses_val = None
             with torch.no_grad():
                 if epoch % config["val_every_n_epochs"] == 0:
                     self.model.eval()
@@ -310,7 +347,16 @@ class Trainer:
                     for k, v in running_losses_val.items():
                         running_losses_val[k] /= len(self.val_loader)
                     logging.info(
-                        f"VALIDATION - Epoch [{epoch}/{n_epochs}], Loss: {running_losses_val['total_loss']:.4f}"
+                        f"VALIDATION - Epoch [{epoch}/{n_epochs}], "
+                        f"Loss: {running_losses_val['total_loss']:.4f} | "
+                        f"{LossLogger.format_losses(running_losses_val)}"
+                    )
+                    self.loss_logger.log_epoch(
+                        "val",
+                        epoch,
+                        global_step,
+                        running_losses_val,
+                        self.optimizer.param_groups[0]["lr"],
                     )
 
                     # write summary for this validation cycle
@@ -322,9 +368,24 @@ class Trainer:
                             "val",
                         )
 
+            plot_every_n_epochs = config.get(
+                "plot_every_n_epochs", config["val_every_n_epochs"]
+            )
+            if epoch % plot_every_n_epochs == 0:
+                try:
+                    self.loss_logger.plot()
+                except Exception:
+                    logging.exception("Failed to update loss curves.")
+
             # save checkpoint
             if epoch % config["save_every_n_epochs"] == 0:
-                self._save_checkpoint(epoch, running_losses_val["total_loss"])
+                if running_losses_val is None:
+                    logging.warning(
+                        "Skipping checkpoint at epoch %s because validation did not run.",
+                        epoch,
+                    )
+                else:
+                    self._save_checkpoint(epoch, running_losses_val["total_loss"])
 
             # scheduler step
             self.scheduler.step()
