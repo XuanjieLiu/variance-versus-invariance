@@ -1,6 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+report_exit() {
+    exit_code=$?
+    echo "finished_at=$(date --iso-8601=seconds)"
+    echo "exit_code=$exit_code"
+}
+
+report_signal() {
+    signal_name="$1"
+    exit_code="$2"
+    echo "received_signal=$signal_name" >&2
+    exit "$exit_code"
+}
+
+trap report_exit EXIT
+trap 'report_signal TERM 143' TERM
+trap 'report_signal INT 130' INT
+
 REPO_DIR="/home/xuanjie.liu/Projects/variance-versus-invariance"
 CONDA_INIT="/home/xuanjie.liu/miniconda3/etc/profile.d/conda.sh"
 

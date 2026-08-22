@@ -241,3 +241,39 @@ dataset/uppercase_letters/letter_office.py
 dataset/uppercase_letters/split_train_val.py
 model/factory.py
 ```
+
+## 11. AGUSA 未见颜色数据
+
+`dataset/uppercase_letters/generate_ood_styles.py` 复用原 uppercase page
+生成逻辑，只替换 style palette。source 与 OOD palette 严格不相交：
+
+```text
+source: black blue green red teal purple orange brown
+OOD:    pink salmon gold lime cyan magenta gray peru
+```
+
+正式数据必须在 SLURM compute node 上生成：
+
+```bash
+srun -p ws-ia -N 1 --mem=16G --cpus-per-task=4 --time=00:30:00 bash -lc '
+  source ~/miniconda3/etc/profile.d/conda.sh
+  conda activate xuanjie
+  cd /home/xuanjie.liu/Projects/variance-versus-invariance
+  python -m dataset.uppercase_letters.generate_ood_styles \
+    --output_dir ../data/UppercaseLettersOODColors \
+    --workers 4
+'
+```
+
+输出：
+
+```text
+../data/UppercaseLettersOODColors/adapt  # 256 pages/style, 2048 total
+../data/UppercaseLettersOODColors/val    # 64 pages/style, 512 total
+../data/UppercaseLettersOODColors/test   # 256 pages/style, 2048 total
+../data/UppercaseLettersOODColors/manifest.json
+```
+
+三个 split 使用独立固定 seed，文件名不重叠。manifest 记录 palette、seed、
+页面数、字体、图像尺寸和生成器版本。数据目录不提交 git；只提交生成器、
+测试和协议文档。

@@ -6,9 +6,11 @@ The only algorithmic part is the optimizer.
 import os
 import sys
 import datetime
+import json
 import logging
 import yaml
 from importlib import import_module
+from glob import glob
 
 import numpy as np
 import torch
@@ -17,8 +19,23 @@ from torch.cuda.amp import GradScaler
 
 from utils.training_utils import *
 from utils.eval_utils import *
+from utils.codebook_logging import CodebookMetricLogger
+from utils.codebook_metrics import (
+    batch_confusion_counts,
+    compute_alias_geometry_metrics,
+    compute_assignment_metrics,
+    file_sha256,
+)
+from utils.checkpoint_transform import (
+    expand_ema_codebook_state,
+    pca_project_and_expand_ema_codebook_state,
+)
 from utils.loss_logging import LossLogger
+from utils.objective_schedule import apply_loss_schedules
+from utils.objective_schedule_logging import ObjectiveScheduleLogger
+from utils.v3_ratio_logging import V3RatioLogger
 from model.factory import get_model
+from model.v3_loss import V3_RATIO_KEYS
 
 
 class Trainer:
@@ -86,6 +103,22 @@ class Trainer:
         # performance history: {epoch: val_loss}
         self.performance_history = {}
         self.loss_logger = LossLogger(self.log_dir)
+        self.codebook_logger = CodebookMetricLogger(self.log_dir)
+        self.v3_ratio_logger = V3RatioLogger(
+            self.log_dir, config["loss_config"]["relativity"]
+        )
+        self.objective_schedule_logger = (
+            ObjectiveScheduleLogger(self.log_dir)
+            if config.get("loss_schedules")
+            else None
+        )
+        self.best_macro_atom_purity = None
+        self.best_macro_val_loss = None
+        self.best_macro_epoch = None
+        self.best_macro_stage = None
+        self.best_macro_checkpoint_path = None
+        self.seed_resumed_macro_checkpoint = False
+        self.checkpoint_transform_metadata = None
 
     def prepare_data(self):
         """
@@ -135,6 +168,12 @@ class Trainer:
         if "V3" in method_specs:
             self.model = get_model(config["dataloader"], model_config).to(self.device)
             from model.v3_loss import V3Loss as Loss
+        if config.get("freeze_vq_projection", False):
+            for module_name in ("project_in", "project_out"):
+                module = getattr(self.model.vq, module_name)
+                for parameter in module.parameters():
+                    parameter.requires_grad_(False)
+            logging.info("VQ project_in/project_out parameters are frozen.")
         logging.info("Model set up.")
         logging.info(self.model.get_model_size())
 
@@ -163,16 +202,102 @@ class Trainer:
 
         # load previous model
         self.start_epoch = 0
+        self.reset_training_state = False
+        checkpoint_state = None
         if "load_checkpoint" in self.config and self.config["load_checkpoint"]:
             cp_path = self.config["load_checkpoint"]
             if os.path.exists(cp_path):
-                save_info = torch.load(cp_path)
-                self.start_epoch = save_info["epoch"]
-                self.model.load_state_dict(save_info["model"])
-                self.optimizer.load_state_dict(save_info["optimizer"])
-                logging.info(
-                    f"Checkpoint loaded from {cp_path} at epoch {self.start_epoch}."
+                checkpoint_state = torch.load(
+                    cp_path, map_location=self.device, weights_only=False
                 )
+                completed_epoch = int(checkpoint_state["epoch"])
+                self.start_epoch = completed_epoch + 1
+                transform_config = self.config.get("checkpoint_transform")
+                if transform_config:
+                    transform_type = transform_config.get("type")
+                    if transform_type == "expand_ema_codebook":
+                        transformed_model, transform_metadata = (
+                            expand_ema_codebook_state(
+                                checkpoint_state["model"],
+                                transform_config["source_atoms"],
+                                transform_config["target_atoms"],
+                                transform_config.get("jitter_fraction", 0.01),
+                                transform_config.get("random_seed", 0),
+                            )
+                        )
+                    elif transform_type == "pca_project_and_expand_ema_codebook":
+                        transformed_model, transform_metadata = (
+                            pca_project_and_expand_ema_codebook_state(
+                                checkpoint_state["model"],
+                                transform_config["source_atoms"],
+                                transform_config["target_atoms"],
+                                transform_config["target_dim"],
+                                transform_config.get("jitter_fraction", 0.01),
+                                transform_config.get("random_seed", 0),
+                            )
+                        )
+                    else:
+                        raise ValueError(
+                            f"Unsupported checkpoint transform: {transform_type}"
+                        )
+                    checkpoint_state["model"] = transformed_model
+                    self.reset_training_state = bool(
+                        transform_config.get("reset_training_state", False)
+                    )
+                    if self.reset_training_state:
+                        self.start_epoch = 0
+                    self.checkpoint_transform_metadata = {
+                        **transform_metadata,
+                        "source_checkpoint": os.path.abspath(cp_path),
+                        "source_checkpoint_sha256": file_sha256(cp_path),
+                        "source_epoch": completed_epoch,
+                        "reset_training_state": self.reset_training_state,
+                    }
+                self.model.load_state_dict(checkpoint_state["model"])
+                if not self.reset_training_state:
+                    self.optimizer.load_state_dict(checkpoint_state["optimizer"])
+                if not self.reset_training_state and "scaler" in checkpoint_state:
+                    self.scaler.load_state_dict(checkpoint_state["scaler"])
+                if transform_config:
+                    self.best_macro_atom_purity = None
+                    self.best_macro_val_loss = None
+                    self.best_macro_epoch = None
+                    self.best_macro_stage = None
+                    logging.info(
+                        "Reset macro-best state after checkpoint transform."
+                    )
+                else:
+                    self.best_macro_atom_purity = checkpoint_state.get(
+                        "best_macro_atom_purity"
+                    )
+                    self.best_macro_val_loss = checkpoint_state.get(
+                        "best_macro_val_loss"
+                    )
+                    self.best_macro_epoch = checkpoint_state.get("best_macro_epoch")
+                    self.best_macro_stage = checkpoint_state.get("best_macro_stage")
+                if (
+                    self.best_macro_atom_purity is None
+                    and not transform_config
+                    and self.config.get("resume_macro_atom_purity") is not None
+                ):
+                    self.best_macro_atom_purity = float(
+                        self.config["resume_macro_atom_purity"]
+                    )
+                    self.best_macro_val_loss = float(
+                        self.config["resume_macro_val_loss"]
+                    )
+                    self.best_macro_epoch = completed_epoch
+                    self.seed_resumed_macro_checkpoint = True
+                logging.info(
+                    f"Checkpoint loaded from {cp_path}; completed epoch "
+                    f"{completed_epoch}, resuming at epoch {self.start_epoch}."
+                )
+                if self.best_macro_atom_purity is not None:
+                    logging.info(
+                        "Restored best macro atom purity %.6g from epoch %s.",
+                        self.best_macro_atom_purity,
+                        self.best_macro_epoch,
+                    )
             else:
                 logging.info(
                     f"No checkpoint found at {cp_path}. Will start from scratch."
@@ -204,7 +329,36 @@ class Trainer:
                 ),
                 last_epoch=self.start_epoch - 1,  # important for resuming training
             )
+        if (
+            checkpoint_state is not None
+            and not self.reset_training_state
+            and "scheduler" in checkpoint_state
+        ):
+            self.scheduler.load_state_dict(checkpoint_state["scheduler"])
+            logging.info("Scheduler state restored from checkpoint.")
+        elif checkpoint_state is not None and not self.reset_training_state:
+            logging.info(
+                "Legacy checkpoint has no scheduler state; reconstructed it from epoch."
+            )
         logging.info(f"Scheduler {optimizer_config['scheduler']} set up.")
+        if self.seed_resumed_macro_checkpoint:
+            self._persist_best_macro_checkpoint(self.best_macro_epoch)
+            logging.info(
+                "Seeded macro-best tracking from legacy resume checkpoint "
+                "at epoch %s (macro=%.6g, val_loss=%.6g).",
+                self.best_macro_epoch,
+                self.best_macro_atom_purity,
+                self.best_macro_val_loss,
+            )
+        if self.checkpoint_transform_metadata is not None:
+            self._write_json_atomic(
+                os.path.join(self.log_dir, "initialization.json"),
+                self.checkpoint_transform_metadata,
+            )
+            logging.info(
+                "Checkpoint transform metadata written to %s.",
+                os.path.join(self.log_dir, "initialization.json"),
+            )
 
     def train(self):
         """
@@ -212,14 +366,115 @@ class Trainer:
         """
         config = self.config
         n_epochs = config["epochs"]
+        if n_epochs <= 0:
+            raise ValueError("epochs must be a positive incremental epoch count.")
+        end_epoch = self.start_epoch + n_epochs - 1
         global_step = self.start_epoch * len(self.train_loader)
-        for epoch in range(self.start_epoch, self.start_epoch + n_epochs):
+        logging.info(
+            "Training epoch range: %s-%s (%s incremental epochs).",
+            self.start_epoch,
+            end_epoch,
+            n_epochs,
+        )
+        if config.get("validate_before_training", False):
+            apply_loss_schedules(
+                self.loss.config,
+                config.get("loss_schedules"),
+                self.start_epoch,
+            )
+            initialization = self._collect_validation()
+            initialization_summary = {
+                "evaluated_before_epoch": int(self.start_epoch),
+                "source_completed_epoch": int(
+                    (self.checkpoint_transform_metadata or {}).get(
+                        "source_epoch", self.start_epoch - 1
+                    )
+                ),
+                "sample_count": initialization["sample_count"],
+                "fragment_count": initialization["fragment_count"],
+                "losses": initialization["losses"],
+                "v3_ratios": initialization["v3_ratios"],
+                "codebook_metrics": initialization["codebook_metrics"],
+                "objective": apply_loss_schedules(
+                    self.loss.config,
+                    config.get("loss_schedules"),
+                    self.start_epoch,
+                ),
+            }
+            gate = config.get("initialization_health_gate")
+            gate_failures = []
+            if gate:
+                gate_failures.extend(
+                    self._gate_failures(
+                        initialization["codebook_metrics"], gate.get("metrics", {})
+                    )
+                )
+                gate_failures.extend(
+                    self._gate_failures(
+                        initialization["losses"], gate.get("losses", {}), "losses."
+                    )
+                )
+            initialization_summary["health_gate"] = {
+                "passed": not gate_failures,
+                "failures": gate_failures,
+                "config": gate,
+            }
+            self._write_json_atomic(
+                os.path.join(self.log_dir, "initialization_metrics.json"),
+                initialization_summary,
+            )
+            logging.info(
+                "INITIALIZATION VALIDATION - before epoch %s | total_loss=%.6g, "
+                "macro_atom_purity=%.6g, active_codes=%s, perplexity=%.6g, coverage=%s",
+                self.start_epoch,
+                initialization["losses"]["total_loss"],
+                initialization["codebook_metrics"]["macro_atom_purity"],
+                initialization["codebook_metrics"]["active_codes"],
+                initialization["codebook_metrics"]["usage_perplexity"],
+                initialization["codebook_metrics"]["dominant_label_coverage"],
+            )
+            if gate_failures:
+                raise RuntimeError(
+                    "Initialization health gate failed: " + "; ".join(gate_failures)
+                )
+            if config.get("save_best_macro_atom_purity", False):
+                self._save_best_macro_checkpoint(
+                    -1,
+                    initialization["losses"]["total_loss"],
+                    initialization["codebook_metrics"]["macro_atom_purity"],
+                    metrics=initialization["codebook_metrics"],
+                    stage="initialization",
+                )
+        for epoch in range(self.start_epoch, end_epoch + 1):
+            objective_values = apply_loss_schedules(
+                self.loss.config,
+                config.get("loss_schedules"),
+                epoch,
+            )
+            if self.objective_schedule_logger is not None:
+                self.objective_schedule_logger.log_epoch(
+                    epoch, global_step, objective_values
+                )
+                logging.info(
+                    "OBJECTIVE - Epoch [%s/%s] | relativity=%.6g, "
+                    "recon_weight=%.6g, commit_weight=%.6g",
+                    epoch,
+                    end_epoch,
+                    objective_values["relativity"],
+                    objective_values["recon_loss_weight"],
+                    objective_values["commit_loss_weight"],
+                )
+                if config["wandb"]:
+                    self._write_summary(
+                        global_step, epoch, objective_values, "objective"
+                    )
             # training loop
             self.model.train()
             running_losses_train = {}
             running_count_train = 0
             epoch_losses_train = {}
             epoch_count_train = 0
+            epoch_v3_ratios_train = {}
             for i, (batch_data, c_labels, s_labels) in enumerate(self.train_loader):
                 # Move data to device
                 batch_data = batch_data.to(device=self.device)
@@ -237,7 +492,7 @@ class Trainer:
                     ) = self.model(batch_data)
 
                     # loss
-                    losses = self.loss.compute_loss(
+                    loss_outputs = self.loss.compute_loss(
                         outputs,
                         emb_c,
                         emb_c_vq,
@@ -245,6 +500,10 @@ class Trainer:
                         emb_s,
                         batch_data,
                     )
+                    v3_ratios = {
+                        name: loss_outputs.pop(name) for name in V3_RATIO_KEYS
+                    }
+                    losses = loss_outputs
                 # backward
                 self.optimizer.zero_grad(set_to_none=True)
                 self.scaler.scale(losses["total_loss"]).backward()
@@ -263,6 +522,10 @@ class Trainer:
                     epoch_losses_train[k] += loss_value
                 running_count_train += 1
                 epoch_count_train += 1
+                for name, value in v3_ratios.items():
+                    epoch_v3_ratios_train[name] = (
+                        epoch_v3_ratios_train.get(name, 0.0) + value.item()
+                    )
                 # write to log
                 is_log_step = (i + 1) % config["log_every_n_steps"] == 0
                 is_last_step = i == len(self.train_loader) - 1
@@ -271,7 +534,7 @@ class Trainer:
                         running_losses_train, running_count_train
                     )
                     logging.info(
-                        f"TRAIN - Epoch [{epoch}/{n_epochs}], Step [{i}/{len(self.train_loader)}], "
+                        f"TRAIN - Epoch [{epoch}/{end_epoch}], Step [{i}/{len(self.train_loader)}], "
                         f"Loss: {mean_losses_train['total_loss']:.4f} | "
                         f"{LossLogger.format_losses(mean_losses_train)}"
                     )
@@ -301,72 +564,108 @@ class Trainer:
                 mean_epoch_losses_train,
                 self.optimizer.param_groups[0]["lr"],
             )
+            mean_epoch_v3_ratios_train = LossLogger.mean(
+                epoch_v3_ratios_train, epoch_count_train
+            )
+            self.v3_ratio_logger.log_epoch(
+                "train",
+                epoch,
+                global_step,
+                mean_epoch_v3_ratios_train,
+            )
+            if config["wandb"]:
+                self._write_summary(
+                    global_step,
+                    epoch,
+                    mean_epoch_v3_ratios_train,
+                    "train_v3_ratio",
+                )
 
-            # validation loop
+            # Validation reuses the full forward pass to collect codebook metrics.
             running_losses_val = None
-            with torch.no_grad():
-                if epoch % config["val_every_n_epochs"] == 0:
-                    self.model.eval()
-                    running_losses_val = {}
-                    sample_vq_indices = []
-                    for i, (batch_data, c_labels, s_labels) in enumerate(
-                        self.val_loader
-                    ):
-                        # Move data to device
-                        batch_data = batch_data.to(device=self.device)
-                        # forward
-                        (
-                            outputs,
-                            emb_c,
-                            emb_c_vq,
-                            vq_indices,
-                            vq_commit_loss,
-                            emb_s,
-                            *rest,
-                        ) = self.model(batch_data)
+            codebook_metrics_val = None
+            if epoch % config["val_every_n_epochs"] == 0:
+                validation = self._collect_validation()
+                running_losses_val = validation["losses"]
+                validation_v3_ratios = validation["v3_ratios"]
+                codebook_metrics_val = validation["codebook_metrics"]
+                validation_sample_count = validation["sample_count"]
+                validation_fragment_count = validation["fragment_count"]
+                logging.info(
+                    f"VALIDATION - Epoch [{epoch}/{end_epoch}], "
+                    f"Loss: {running_losses_val['total_loss']:.4f} | "
+                    f"{LossLogger.format_losses(running_losses_val)}"
+                )
+                self.loss_logger.log_epoch(
+                    "val",
+                    epoch,
+                    global_step,
+                    running_losses_val,
+                    self.optimizer.param_groups[0]["lr"],
+                )
+                self.v3_ratio_logger.log_epoch(
+                    "val",
+                    epoch,
+                    global_step,
+                    validation_v3_ratios,
+                )
+                logging.info(
+                    "VALIDATION V3 RATIOS - Epoch [%s/%s] | %s",
+                    epoch,
+                    end_epoch,
+                    ", ".join(
+                        f"{name}={validation_v3_ratios[name]:.6g}"
+                        for name in V3_RATIO_KEYS
+                    ),
+                )
+                self.codebook_logger.log_epoch(
+                    "val",
+                    epoch,
+                    global_step,
+                    codebook_metrics_val,
+                    validation_sample_count,
+                    validation_fragment_count,
+                )
+                logging.info(
+                    "VALIDATION CODEBOOK - Epoch [%s/%s] | "
+                    "one_to_one_accuracy=%.6g, legacy_codebook_accuracy=%.6g, "
+                    "macro_atom_purity=%.6g, codebook_purity=%.6g, active_codes=%s, "
+                    "usage_perplexity=%.6g, dominant_label_coverage=%s, "
+                    "dominant_codes[min,max,cv]=[%s,%s,%.6g]",
+                    epoch,
+                    end_epoch,
+                    codebook_metrics_val["one_to_one_accuracy"],
+                    codebook_metrics_val["legacy_codebook_accuracy"],
+                    codebook_metrics_val["macro_atom_purity"],
+                    codebook_metrics_val["codebook_purity"],
+                    codebook_metrics_val["active_codes"],
+                    codebook_metrics_val["usage_perplexity"],
+                    codebook_metrics_val["dominant_label_coverage"],
+                    codebook_metrics_val["dominant_label_code_count_min"],
+                    codebook_metrics_val["dominant_label_code_count_max"],
+                    codebook_metrics_val["dominant_label_code_count_cv"],
+                )
 
-                        # loss
-                        losses = self.loss.compute_loss(
-                            outputs,
-                            emb_c,
-                            emb_c_vq,
-                            vq_commit_loss,
-                            emb_s,
-                            batch_data,
-                        )
-                        # accumulate running loss
-                        for k, v in losses.items():
-                            if k not in running_losses_val:
-                                running_losses_val[k] = 0
-                            running_losses_val[k] += v.item()
-                        # check vq indices
-                        vq_indices = vq_indices.detach().cpu().numpy()
-                        sample_vq_indices.append(vq_indices)
-
-                    # write to log
-                    for k, v in running_losses_val.items():
-                        running_losses_val[k] /= len(self.val_loader)
-                    logging.info(
-                        f"VALIDATION - Epoch [{epoch}/{n_epochs}], "
-                        f"Loss: {running_losses_val['total_loss']:.4f} | "
-                        f"{LossLogger.format_losses(running_losses_val)}"
-                    )
-                    self.loss_logger.log_epoch(
-                        "val",
-                        epoch,
+                # write summary for this validation cycle
+                if config["wandb"]:
+                    self._write_summary(
                         global_step,
+                        epoch,
                         running_losses_val,
-                        self.optimizer.param_groups[0]["lr"],
+                        "val",
                     )
-
-                    # write summary for this validation cycle
-                    if config["wandb"]:
-                        self._write_summary(
-                            global_step,
-                            epoch,
-                            running_losses_val,
-                            "val",
-                        )
+                    self._write_summary(
+                        global_step,
+                        epoch,
+                        codebook_metrics_val,
+                        "val_codebook",
+                    )
+                    self._write_summary(
+                        global_step,
+                        epoch,
+                        validation_v3_ratios,
+                        "val_v3_ratio",
+                    )
 
             plot_every_n_epochs = config.get(
                 "plot_every_n_epochs", config["val_every_n_epochs"]
@@ -376,8 +675,37 @@ class Trainer:
                     self.loss_logger.plot()
                 except Exception:
                     logging.exception("Failed to update loss curves.")
+                try:
+                    self.codebook_logger.plot()
+                except Exception:
+                    logging.exception("Failed to update codebook metric curves.")
+                try:
+                    self.v3_ratio_logger.plot()
+                except Exception:
+                    logging.exception("Failed to update V3 ratio curves.")
+                if self.objective_schedule_logger is not None:
+                    try:
+                        self.objective_schedule_logger.plot()
+                    except Exception:
+                        logging.exception("Failed to update objective schedule curves.")
 
-            # save checkpoint
+            # Advance before checkpointing so a resumed checkpoint contains the
+            # learning rate and scheduler state for the next epoch.
+            self.scheduler.step()
+
+            if (
+                codebook_metrics_val is not None
+                and config.get("save_best_macro_atom_purity", False)
+            ):
+                self._save_best_macro_checkpoint(
+                    epoch,
+                    running_losses_val["total_loss"],
+                    codebook_metrics_val["macro_atom_purity"],
+                    metrics=codebook_metrics_val,
+                )
+
+            # Keep exactly one current checkpoint; macro-best is maintained
+            # independently above.
             if epoch % config["save_every_n_epochs"] == 0:
                 if running_losses_val is None:
                     logging.warning(
@@ -385,17 +713,92 @@ class Trainer:
                         epoch,
                     )
                 else:
-                    self._save_checkpoint(epoch, running_losses_val["total_loss"])
+                    checkpoint_policy = config.get(
+                        "checkpoint_policy", "current_and_best_macro"
+                    )
+                    if checkpoint_policy != "current_and_best_macro":
+                        raise ValueError(
+                            f"Unsupported checkpoint_policy: {checkpoint_policy}"
+                        )
+                    self._save_current_checkpoint(
+                        epoch,
+                        running_losses_val["total_loss"],
+                        codebook_metrics_val["macro_atom_purity"],
+                    )
 
-            # scheduler step
-            self.scheduler.step()
+    def _collect_validation(self):
+        config = self.config
+        running_losses = {}
+        running_v3_ratios = {}
+        confusion_counts = torch.zeros(
+            (config["model_config"]["n_atoms"], len(self.C_LIST)),
+            dtype=torch.int64,
+            device=self.device,
+        )
+        sample_count = 0
+        self.model.eval()
+        with torch.inference_mode():
+            for batch_data, c_labels, s_labels in self.val_loader:
+                batch_data = batch_data.to(device=self.device, non_blocking=True)
+                sample_count += int(batch_data.shape[0])
+                (
+                    outputs,
+                    emb_c,
+                    emb_c_vq,
+                    vq_indices,
+                    vq_commit_loss,
+                    emb_s,
+                    *rest,
+                ) = self.model(batch_data, freeze_codebook=True)
+                loss_outputs = self.loss.compute_loss(
+                    outputs,
+                    emb_c,
+                    emb_c_vq,
+                    vq_commit_loss,
+                    emb_s,
+                    batch_data,
+                )
+                ratios = {name: loss_outputs.pop(name) for name in V3_RATIO_KEYS}
+                for name, value in loss_outputs.items():
+                    running_losses[name] = running_losses.get(name, 0.0) + value.item()
+                for name, value in ratios.items():
+                    running_v3_ratios[name] = (
+                        running_v3_ratios.get(name, 0.0) + value.item()
+                    )
+                confusion_counts += batch_confusion_counts(
+                    vq_indices,
+                    c_labels,
+                    config["model_config"]["n_atoms"],
+                    len(self.C_LIST),
+                )
+
+        batch_count = len(self.val_loader)
+        losses = {name: value / batch_count for name, value in running_losses.items()}
+        ratios = {
+            name: value / batch_count for name, value in running_v3_ratios.items()
+        }
+        confusion_counts_cpu = confusion_counts.cpu().numpy()
+        metrics = {
+            **compute_assignment_metrics(confusion_counts_cpu),
+            **compute_alias_geometry_metrics(
+                confusion_counts_cpu, self.model.vq.codebook.detach().cpu()
+            ),
+        }
+        return {
+            "losses": losses,
+            "v3_ratios": ratios,
+            "codebook_metrics": metrics,
+            "sample_count": sample_count,
+            "fragment_count": int(confusion_counts.sum().item()),
+        }
 
     def _write_summary(self, i_step, i_epoch, losses, partition="train", fig=None):
         if self.config["debug"]:
             return
         log_dict = {"epoch": i_epoch}
         for k, v in losses.items():
-            log_dict[f"{partition}/{k}"] = v
+            if isinstance(v, (int, float, np.integer, np.floating)):
+                log_dict[f"{partition}/{k}"] = v
         if partition == "val":
             log_dict["lr"] = self.optimizer.param_groups[0]["lr"]
         self.wandb.log(log_dict, step=i_step)
@@ -409,37 +812,145 @@ class Trainer:
             elif isinstance(fig, np.ndarray):
                 self.wandb.log({f"{partition}/fig": self.wandb.Image(fig)}, step=i_step)
 
-    def _save_checkpoint(self, epoch, val_loss):
-        if self.config["save_top_k"] is not None:
-            # keep the best checkpoints
-            self.performance_history = self.performance_history or {}
-            if len(self.performance_history) > self.config["save_top_k"]:
-                # remove the worst checkpoint
-                worst_epoch = max(
-                    self.performance_history, key=self.performance_history.get
-                )
-                worst_path = os.path.join(self.log_dir, f"cp_epoch{worst_epoch}.pt")
-                os.remove(worst_path)
-                del self.performance_history[worst_epoch]
+    def _checkpoint_state(self, epoch):
+        return {
+            "epoch": epoch,
+            "model": self.model.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "scheduler": self.scheduler.state_dict(),
+            "scaler": self.scaler.state_dict(),
+            "best_macro_atom_purity": self.best_macro_atom_purity,
+            "best_macro_val_loss": self.best_macro_val_loss,
+            "best_macro_epoch": self.best_macro_epoch,
+            "best_macro_stage": self.best_macro_stage,
+        }
 
-            # save the current checkpoint
-            save_info = {
-                "epoch": epoch,
-                "model": self.model.state_dict(),
-                "optimizer": self.optimizer.state_dict(),
-            }
-            save_name = f"cp_epoch{epoch}.pt"
-            save_path = os.path.join(self.log_dir, save_name)
-            torch.save(save_info, save_path)
-            self.performance_history[epoch] = val_loss
-            logging.info(f"Checkpoint saved at {save_path}")
-        else:  # directly save
-            save_info = {
-                "epoch": epoch,
-                "model": self.model.state_dict(),
-                "optimizer": self.optimizer.state_dict(),
-            }
-            save_name = f"cp_epoch{epoch}.pt"
-            save_path = os.path.join(self.log_dir, save_name)
-            torch.save(save_info, save_path)
-            logging.info(f"Checkpoint saved at {save_path}")
+    @staticmethod
+    def _write_json_atomic(path, payload):
+        temporary_path = path + ".tmp"
+        with open(temporary_path, "w") as output_file:
+            json.dump(payload, output_file, indent=2, sort_keys=True)
+            output_file.write("\n")
+        os.replace(temporary_path, path)
+
+    @staticmethod
+    def _is_better_macro_checkpoint(
+        macro_atom_purity,
+        val_loss,
+        best_macro_atom_purity,
+        best_macro_val_loss,
+    ):
+        if best_macro_atom_purity is None:
+            return True
+        tolerance = 1e-12
+        if macro_atom_purity > best_macro_atom_purity + tolerance:
+            return True
+        return (
+            abs(macro_atom_purity - best_macro_atom_purity) <= tolerance
+            and (best_macro_val_loss is None or val_loss < best_macro_val_loss)
+        )
+
+    @staticmethod
+    def _gate_failures(values, gate, prefix=""):
+        failures = []
+        for name, threshold in gate.get("min", {}).items():
+            value = values.get(name)
+            if value is None or not np.isfinite(float(value)) or float(value) < float(threshold):
+                failures.append(f"{prefix}{name}={value} < {threshold}")
+        for name, threshold in gate.get("max", {}).items():
+            value = values.get(name)
+            if value is None or not np.isfinite(float(value)) or float(value) > float(threshold):
+                failures.append(f"{prefix}{name}={value} > {threshold}")
+        return failures
+
+    def _save_best_macro_checkpoint(
+        self, epoch, val_loss, macro_atom_purity, metrics=None, stage="training"
+    ):
+        macro_atom_purity = float(macro_atom_purity)
+        val_loss = float(val_loss)
+        health_gate = getattr(self, "config", {}).get("macro_best_health_gate")
+        if health_gate and metrics is not None:
+            failures = self._gate_failures(metrics, health_gate)
+            if failures:
+                logging.info(
+                    "Macro-best candidate at epoch %s is ineligible: %s",
+                    epoch,
+                    "; ".join(failures),
+                )
+                return
+        if not self._is_better_macro_checkpoint(
+            macro_atom_purity,
+            val_loss,
+            self.best_macro_atom_purity,
+            self.best_macro_val_loss,
+        ):
+            return
+
+        self.best_macro_atom_purity = macro_atom_purity
+        self.best_macro_val_loss = val_loss
+        self.best_macro_epoch = int(epoch)
+        self.best_macro_stage = stage
+
+        self._persist_best_macro_checkpoint(epoch)
+
+    def _persist_best_macro_checkpoint(self, epoch):
+
+        epoch_label = "init" if int(epoch) < 0 else str(epoch)
+        save_name = f"cp_best_macro_atom_purity_epoch{epoch_label}.pt"
+        save_path = os.path.join(self.log_dir, save_name)
+        temporary_path = save_path + ".tmp"
+        torch.save(self._checkpoint_state(epoch), temporary_path)
+        os.replace(temporary_path, save_path)
+        self.best_macro_checkpoint_path = save_path
+
+        metadata = {
+            "epoch": int(epoch),
+            "macro_atom_purity": self.best_macro_atom_purity,
+            "validation_total_loss": self.best_macro_val_loss,
+            "checkpoint": save_name,
+            "stage": self.best_macro_stage,
+        }
+        metadata_path = os.path.join(self.log_dir, "best_macro_atom_purity.json")
+        metadata_temporary_path = metadata_path + ".tmp"
+        with open(metadata_temporary_path, "w") as metadata_file:
+            json.dump(metadata, metadata_file, indent=2, sort_keys=True)
+            metadata_file.write("\n")
+        os.replace(metadata_temporary_path, metadata_path)
+
+        for old_path in glob(
+            os.path.join(self.log_dir, "cp_best_macro_atom_purity_epoch*.pt")
+        ):
+            if os.path.abspath(old_path) != os.path.abspath(save_path):
+                os.remove(old_path)
+        logging.info(
+            "Best macro atom purity checkpoint saved at %s "
+            "(macro=%.6g, val_loss=%.6g).",
+            save_path,
+            self.best_macro_atom_purity,
+            self.best_macro_val_loss,
+        )
+
+    def _save_current_checkpoint(self, epoch, val_loss, macro_atom_purity):
+        save_name = f"cp_current_epoch{epoch}.pt"
+        save_path = os.path.join(self.log_dir, save_name)
+        temporary_path = save_path + ".tmp"
+        torch.save(self._checkpoint_state(epoch), temporary_path)
+        os.replace(temporary_path, save_path)
+
+        metadata = {
+            "epoch": int(epoch),
+            "macro_atom_purity": float(macro_atom_purity),
+            "validation_total_loss": float(val_loss),
+            "checkpoint": save_name,
+        }
+        metadata_path = os.path.join(self.log_dir, "current_checkpoint.json")
+        metadata_temporary_path = metadata_path + ".tmp"
+        with open(metadata_temporary_path, "w") as metadata_file:
+            json.dump(metadata, metadata_file, indent=2, sort_keys=True)
+            metadata_file.write("\n")
+        os.replace(metadata_temporary_path, metadata_path)
+
+        for old_path in glob(os.path.join(self.log_dir, "cp_current_epoch*.pt")):
+            if os.path.abspath(old_path) != os.path.abspath(save_path):
+                os.remove(old_path)
+        logging.info("Current checkpoint saved at %s", save_path)

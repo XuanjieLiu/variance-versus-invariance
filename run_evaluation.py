@@ -1,11 +1,25 @@
 import yaml
 import argparse
 from tester import Tester
+from utils.subset_sampling import SUBSET_STRATEGIES
+from utils.evaluation_paths import resolve_evaluation_paths
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--config", type=str, default="config.yaml")
+    parser.add_argument("--config", type=str, default=None)
+    parser.add_argument(
+        "--run",
+        type=str,
+        default=None,
+        help="Run name or directory; config.yaml is resolved from this run.",
+    )
+    parser.add_argument(
+        "--active_checkpoint",
+        type=str,
+        default=None,
+        help="Checkpoint path/name, or current/best when --run is given.",
+    )
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--pr_metrics", action="store_true")
     parser.add_argument("--vis_tsne", action="store_true")
@@ -16,13 +30,19 @@ if __name__ == "__main__":
         "--test_subset_size",
         type=int,
         default=None,
-        help="Evaluate on a random subset of the test set with this many samples.",
+        help="Evaluate on a subset of the test set with this many samples.",
     )
     parser.add_argument(
         "--test_subset_seed",
         type=int,
         default=None,
         help="Random seed used when --test_subset_size is set.",
+    )
+    parser.add_argument(
+        "--test_subset_strategy",
+        choices=SUBSET_STRATEGIES,
+        default=None,
+        help="Subset selection strategy; use style_stratified for quick letter evaluation.",
     )
     parser.add_argument(
         "--help",
@@ -41,8 +61,14 @@ if __name__ == "__main__":
             value = unknown_args[unknown_args.index(arg) + 1]
             additional_args[key] = value
 
+    resolved = resolve_evaluation_paths(
+        run=known_args.run,
+        active_checkpoint=known_args.active_checkpoint,
+        config=known_args.config,
+    )
+
     # Load config file
-    with open(known_args.config, "r") as f:
+    with open(resolved["config"], "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
 
     # Update config with additional arguments
@@ -63,6 +89,18 @@ if __name__ == "__main__":
         config["test_subset_size"] = known_args.test_subset_size
     if known_args.test_subset_seed is not None:
         config["test_subset_seed"] = known_args.test_subset_seed
+    if known_args.test_subset_strategy is not None:
+        config["test_subset_strategy"] = known_args.test_subset_strategy
+    if resolved["active_checkpoint"] is not None:
+        config["active_checkpoint"] = resolved["active_checkpoint"]
+    elif not config.get("active_checkpoint"):
+        parser.error(
+            "No checkpoint resolved. Provide --active_checkpoint or use --run "
+            "with current_checkpoint.json."
+        )
+
+    print("Resolved config:", resolved["config"])
+    print("Resolved checkpoint:", config["active_checkpoint"])
 
     tester = Tester(config)
     tester.prepare_data()

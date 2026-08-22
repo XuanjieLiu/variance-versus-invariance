@@ -1,7 +1,6 @@
 import argparse
 import csv
 import datetime
-import hashlib
 import json
 import os
 from importlib import import_module
@@ -9,11 +8,17 @@ from importlib import import_module
 import numpy as np
 import torch
 import yaml
-from scipy.optimize import linear_sum_assignment
-from torch.utils.data import DataLoader, Subset
 
 from model.factory import get_model
 from model.v3_loss import V3Loss
+from utils.codebook_metrics import (
+    batch_confusion_counts,
+    compute_alias_geometry_metrics,
+    compute_assignment_metrics,
+    file_sha256,
+)
+from utils.subset_sampling import SUBSET_STRATEGIES, make_subset_loader
+from model.v3_loss import V3_RATIO_KEYS
 
 
 def select_best_checkpoint(run_dir):
@@ -38,23 +43,26 @@ def select_best_checkpoint(run_dir):
     )
 
 
+def select_best_macro_checkpoint(run_dir):
+    metadata_path = os.path.join(run_dir, "best_macro_atom_purity.json")
+    if not os.path.exists(metadata_path):
+        raise FileNotFoundError(f"Missing macro-purity metadata: {metadata_path}")
+    with open(metadata_path) as metadata_file:
+        metadata = json.load(metadata_file)
+    checkpoint = os.path.join(run_dir, metadata["checkpoint"])
+    if not os.path.exists(checkpoint):
+        raise FileNotFoundError(checkpoint)
+    return (
+        checkpoint,
+        int(metadata["epoch"]),
+        float(metadata["macro_atom_purity"]),
+        float(metadata["validation_total_loss"]),
+    )
+
+
 def compute_codebook_metrics(confusion_counts, codebook):
     counts = np.asarray(confusion_counts, dtype=np.float64)
-    usage = counts.sum(axis=1)
-    total = usage.sum()
-    active_mask = usage > 0
-
-    if total == 0:
-        raise ValueError("No code assignments were collected.")
-
-    usage_prob = usage[active_mask] / total
-    usage_perplexity = float(np.exp(-np.sum(usage_prob * np.log(usage_prob))))
-    purity = float(counts.max(axis=1).sum() / total)
-    row_ind, col_ind = linear_sum_assignment(-counts)
-    one_to_one_accuracy = float(counts[row_ind, col_ind].sum() / total)
-    dominant_label_coverage = int(
-        np.unique(np.argmax(counts[active_mask], axis=1)).size
-    )
+    metrics = compute_assignment_metrics(counts)
 
     codebook = torch.as_tensor(codebook, dtype=torch.float32)
     if codebook.ndim == 3 and codebook.shape[0] == 1:
@@ -68,16 +76,8 @@ def compute_codebook_metrics(confusion_counts, codebook):
         else float("nan")
     )
 
-    return {
-        "codebook_size": int(counts.shape[0]),
-        "content_label_count": int(counts.shape[1]),
-        "active_codes": int(active_mask.sum()),
-        "usage_perplexity": usage_perplexity,
-        "codebook_purity": purity,
-        "one_to_one_accuracy": one_to_one_accuracy,
-        "dominant_label_coverage": dominant_label_coverage,
-        "min_atom_distance": min_atom_distance,
-    }
+    alias_metrics = compute_alias_geometry_metrics(counts, codebook)
+    return {**metrics, **alias_metrics, "min_atom_distance": min_atom_distance}
 
 
 def resolve_data_path(config):
@@ -88,7 +88,9 @@ def resolve_data_path(config):
     raise FileNotFoundError(f"No test or validation split under {config['data_dir']}")
 
 
-def build_loader(config, subset_size=None, subset_seed=0):
+def build_loader(
+    config, subset_size=None, subset_seed=0, subset_strategy="random"
+):
     dataloader_module = import_module("dataloader." + config["dataloader"])
     data_path = resolve_data_path(config)
     loader = dataloader_module.get_dataloader(
@@ -100,51 +102,58 @@ def build_loader(config, subset_size=None, subset_seed=0):
         shuffle=False,
     )
     if subset_size is None:
-        return loader, dataloader_module.C_LIST
+        metadata = {
+            "subset_size": None,
+            "subset_seed": None,
+            "subset_strategy": "full",
+            "style_counts": {},
+        }
+        return loader, dataloader_module.C_LIST, metadata
 
-    generator = torch.Generator().manual_seed(subset_seed)
-    count = min(int(subset_size), len(loader.dataset))
-    indices = torch.randperm(len(loader.dataset), generator=generator)[:count]
-    subset = Subset(loader.dataset, sorted(indices.tolist()))
-    subset_loader = DataLoader(
-        subset,
-        batch_size=config["batch_size"],
-        shuffle=False,
-        num_workers=config.get("num_workers", 0),
+    subset_loader, metadata = make_subset_loader(
+        loader,
+        subset_size,
+        seed=subset_seed,
+        strategy=subset_strategy,
     )
-    return subset_loader, dataloader_module.C_LIST
+    return subset_loader, dataloader_module.C_LIST, metadata
 
 
-def file_sha256(path):
-    digest = hashlib.sha256()
-    with open(path, "rb") as input_file:
-        for block in iter(lambda: input_file.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def evaluate(config, checkpoint, subset_size=None, subset_seed=0):
+def evaluate(
+    config,
+    checkpoint,
+    subset_size=None,
+    subset_seed=0,
+    subset_strategy="random",
+):
     if not torch.cuda.is_available():
         raise RuntimeError("Codebook health evaluation requires a GPU allocation.")
     device = torch.device("cuda")
 
-    loader, content_labels = build_loader(config, subset_size, subset_seed)
+    loader, content_labels, subset_metadata = build_loader(
+        config, subset_size, subset_seed, subset_strategy
+    )
     model = get_model(config["dataloader"], config["model_config"]).to(device)
-    checkpoint_state = torch.load(checkpoint, map_location=device)
+    checkpoint_state = torch.load(
+        checkpoint, map_location=device, weights_only=False
+    )
     model.load_state_dict(checkpoint_state["model"])
     model.eval()
     loss_fn = V3Loss(config["loss_config"])
 
-    confusion_counts = np.zeros(
-        (config["model_config"]["n_atoms"], len(content_labels)), dtype=np.int64
+    confusion_counts = torch.zeros(
+        (config["model_config"]["n_atoms"], len(content_labels)),
+        dtype=torch.int64,
+        device=device,
     )
     loss_sums = {}
+    v3_ratio_sums = {}
     sample_count = 0
     first_batch = None
 
-    with torch.no_grad():
+    with torch.inference_mode():
         for batch_data, content_idx, _ in loader:
-            batch_data = batch_data.to(device)
+            batch_data = batch_data.to(device, non_blocking=True)
             if first_batch is None:
                 first_batch = batch_data.detach().clone()
             outputs = model(batch_data, freeze_codebook=True)
@@ -159,17 +168,25 @@ def evaluate(config, checkpoint, subset_size=None, subset_seed=0):
             batch_size = batch_data.shape[0]
             sample_count += batch_size
             for name, value in losses.items():
-                loss_sums[name] = loss_sums.get(name, 0.0) + value.item() * batch_size
+                target = v3_ratio_sums if name in V3_RATIO_KEYS else loss_sums
+                target[name] = target.get(name, 0.0) + value.item() * batch_size
 
-            indices = outputs[3].detach().cpu().numpy().reshape(-1)
-            labels = content_idx.numpy().reshape(-1)
-            np.add.at(confusion_counts, (indices, labels), 1)
+            confusion_counts += batch_confusion_counts(
+                outputs[3],
+                content_idx,
+                config["model_config"]["n_atoms"],
+                len(content_labels),
+            )
 
     mean_losses = {name: value / sample_count for name, value in loss_sums.items()}
+    mean_v3_ratios = {
+        name: value / sample_count for name, value in v3_ratio_sums.items()
+    }
     codebook = model.vq.codebook.detach().cpu()
-    codebook_metrics = compute_codebook_metrics(confusion_counts, codebook)
+    confusion_counts_cpu = confusion_counts.cpu().numpy()
+    codebook_metrics = compute_codebook_metrics(confusion_counts_cpu, codebook)
 
-    with torch.no_grad():
+    with torch.inference_mode():
         model.eval()
         eval_outputs = model(first_batch, freeze_codebook=True)
         eval_recon = torch.nn.functional.mse_loss(eval_outputs[0], first_batch).item()
@@ -179,8 +196,10 @@ def evaluate(config, checkpoint, subset_size=None, subset_seed=0):
 
     return {
         "sample_count": sample_count,
-        "fragment_count": int(confusion_counts.sum()),
+        "fragment_count": int(confusion_counts_cpu.sum()),
+        "sampling": subset_metadata,
         "losses": mean_losses,
+        "v3_ratios": mean_v3_ratios,
         "codebook": codebook_metrics,
         "fixed_batch": {
             "eval_recon_loss": eval_recon,
@@ -196,8 +215,18 @@ def main():
     parser.add_argument("--run-dir")
     parser.add_argument("--checkpoint")
     parser.add_argument("--output")
+    parser.add_argument(
+        "--selection-metric",
+        choices=("val_loss", "macro_atom_purity"),
+        default="val_loss",
+    )
     parser.add_argument("--test-subset-size", type=int)
     parser.add_argument("--test-subset-seed", type=int, default=0)
+    parser.add_argument(
+        "--test-subset-strategy",
+        choices=SUBSET_STRATEGIES,
+        default="random",
+    )
     args = parser.parse_args()
 
     with open(args.config) as config_file:
@@ -205,12 +234,21 @@ def main():
 
     selected_epoch = None
     selection_val_loss = None
+    selection_macro_atom_purity = None
     if args.checkpoint:
         checkpoint = args.checkpoint
     elif args.run_dir:
-        checkpoint, selected_epoch, selection_val_loss = select_best_checkpoint(
-            args.run_dir
-        )
+        if args.selection_metric == "macro_atom_purity":
+            (
+                checkpoint,
+                selected_epoch,
+                selection_macro_atom_purity,
+                selection_val_loss,
+            ) = select_best_macro_checkpoint(args.run_dir)
+        else:
+            checkpoint, selected_epoch, selection_val_loss = select_best_checkpoint(
+                args.run_dir
+            )
     else:
         parser.error("Provide either --checkpoint or --run-dir.")
 
@@ -222,6 +260,7 @@ def main():
         checkpoint,
         subset_size=args.test_subset_size,
         subset_seed=args.test_subset_seed,
+        subset_strategy=args.test_subset_strategy,
     )
     summary = {
         "evaluated_at": datetime.datetime.now().astimezone().isoformat(
@@ -231,9 +270,14 @@ def main():
         "checkpoint": os.path.abspath(checkpoint),
         "checkpoint_sha256": file_sha256(checkpoint),
         "selected_epoch": selected_epoch,
+        "selection_metric": args.selection_metric,
         "selection_val_loss": selection_val_loss,
+        "selection_macro_atom_purity": selection_macro_atom_purity,
         "test_subset_size": args.test_subset_size,
         "test_subset_seed": args.test_subset_seed,
+        "test_subset_strategy": (
+            args.test_subset_strategy if args.test_subset_size is not None else "full"
+        ),
         **results,
     }
 

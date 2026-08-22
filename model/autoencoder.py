@@ -41,6 +41,55 @@ class CSAE(nn.Module):
 
         return quantized, indices, commit_loss
 
+    @property
+    def vq_code_dim(self):
+        return int(self.vq.codebook.shape[-1])
+
+    def project_content_to_vq(self, emb_c):
+        """Project encoder content into the native VQ/codebook space."""
+        return self.vq.project_in(emb_c)
+
+    def lift_vq_codes(self, vq_codes):
+        """Lift native VQ codes into the decoder's content space."""
+        return self.vq.project_out(vq_codes)
+
+    def get_native_vq_codes(self, indices):
+        """Return native (pre-project-out) codebook atoms for code indices."""
+        return self.vq.get_codes_from_indices(indices)
+
+    def native_vq_ste_from_indices(self, emb_c, indices):
+        """Build a native-space STE value while preserving encoder gradients."""
+        projected = self.project_content_to_vq(emb_c)
+        hard_codes = self.get_native_vq_codes(indices).to(projected)
+        return projected + (hard_codes - projected).detach()
+
+    def quantize_with_native(self, x, freeze_codebook=False, ema_update_weight=None):
+        """Quantize once and expose both decoder-space and native VQ outputs."""
+        if ema_update_weight is None:
+            quantized, indices, commit_loss = self.vq(
+                x, freeze_codebook=freeze_codebook
+            )
+        else:
+            quantized, indices, commit_loss = self.vq(
+                x,
+                freeze_codebook=freeze_codebook,
+                ema_update_weight=ema_update_weight,
+            )
+        native_quantized = self.native_vq_ste_from_indices(x, indices)
+        return quantized, native_quantized, indices, commit_loss
+
+    def quantize_native_prediction(
+        self, native_prediction, freeze_codebook=False, ema_update_weight=None
+    ):
+        """Quantize an arithmetic prediction expressed directly in VQ space."""
+        decoder_space_prediction = self.lift_vq_codes(native_prediction)
+        _, native_quantized, indices, commit_loss = self.quantize_with_native(
+            decoder_space_prediction,
+            freeze_codebook=freeze_codebook,
+            ema_update_weight=ema_update_weight,
+        )
+        return native_quantized, indices, commit_loss
+
     def decode(self, emb_c, emb_s):
         output = self.decoder(emb_c, emb_s)
 

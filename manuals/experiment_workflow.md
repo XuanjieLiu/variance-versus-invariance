@@ -23,14 +23,20 @@ conda activate xuanjie
 
 ## 2. 实验台账
 
-正式实验使用三个文件：
+研究台账分三层：
 
-- `experiment_log/SETTINGS.md`：setting、假设、固定条件和 decision gate。
+- `experiment_log/README.md`：三个研究方向的 dashboard 和下一决策。
+- `experiment_log/directions/*.md`：跨 run 的假设、证据综合和 backlog。
+- `experiment_log/SETTINGS.md`：setting、固定条件和 decision gate。
 - `experiment_log/ACTIVE_RUNS.md`：已提交但尚未验收的正式 runs。
 - `experiment_log/ARCHIVE.md`：成功、失败、超时或取消后已验收的 runs。
 
-Smoke run 不进入台账。正式提交前先写 ACTIVE；提交成功后补 Slurm Job ID。
+Smoke run 不进入台账。验证完成后立即删除对应的 `logs/smoke-*` 目录，避免
+checkpoint 长期占用空间。正式提交前先写 ACTIVE；提交成功后补 Slurm Job ID。
 验收时必须把同一 Run ID 从 ACTIVE 删除并写入 ARCHIVE。
+
+ACTIVE/ARCHIVE 只写简洁生命周期信息；长结论只更新到对应 direction 文件，
+避免三处互相漂移。每个 setting/run 都要标明 Direction 和 Hypothesis ID。
 
 ## 3. GPU smoke
 
@@ -51,9 +57,10 @@ srun --partition=ws-ia -N 1 --gres=gpu:1 --mem=32G --cpus-per-task=4 \
   '
 ```
 
-检查 `logs/<smoke-name>/` 中存在 `config.yaml`、checkpoint、
-`loss_history.csv`、`loss_epoch_history.csv` 和 `loss_curves.png`。Smoke
-目录保留为普通 artifact，不写入实验台账。
+检查 `logs/<smoke-name>/` 中存在 `config.yaml`、checkpoint、loss、codebook
+和 V3 ratio 三套 CSV/PNG。启用 `save_best_macro_atom_purity` 时还必须生成
+`cp_best_macro_atom_purity_epoch<N>.pt` 和 `best_macro_atom_purity.json`。
+验证通过或失败原因确认后，立即精确删除这个 smoke 目录；不要写入实验台账。
 
 ## 4. 正式提交
 
@@ -86,6 +93,76 @@ scancel <job-id>
 
 ## 6. 验收评估
 
+### Checkpoint 保留规则
+
+新 run 使用 `checkpoint_policy: current_and_best_macro`，最多保留两个模型文件：
+
+- `cp_current_epoch<N>.pt`：每轮替换上一个 current，并由
+  `current_checkpoint.json` 指向。
+- `cp_best_macro_atom_purity_epoch<N>.pt`：validation macro atom purity 提升时
+  替换；同分时 validation total loss 更低者胜出，并由
+  `best_macro_atom_purity.json` 指向。
+
+即使 current 和 best 来自同一 epoch，也保留两个独立物理文件，便于稳定续训
+和验收。历史 run 不追溯清理；旧 checkpoint 续训时可在 config 用
+`resume_macro_atom_purity` 和 `resume_macro_val_loss` 初始化已有最佳值。
+
+### Evaluation 路径解析
+
+`run_evaluation.py` 默认从 run 目录内读取训练时备份的 `config.yaml`，无需再去
+根目录匹配原 config：
+
+```bash
+# run 名；默认评估 current_checkpoint.json 指向的 checkpoint
+python run_evaluation.py --run <run-name> --confusion_mtx
+
+# run 名配 current/best 别名，或配 run 内的具体文件名
+python run_evaluation.py --run <run-name> --active_checkpoint best --confusion_mtx
+python run_evaluation.py --run <run-name> \
+  --active_checkpoint cp_current_epoch150.pt --confusion_mtx
+
+# 完整 checkpoint 路径；从父目录推断 config.yaml
+python run_evaluation.py \
+  --active_checkpoint logs/<run-name>/cp_current_epoch150.pt \
+  --confusion_mtx
+```
+
+`--run` 也接受 run 目录的相对或绝对路径。显式 `--config` 仍兼容且优先级
+最高；同时给出 run 和 run 外 checkpoint 会报错，防止模型与 config 错配。
+
+`macro_atom_purity` 是每个 active atom 独立选择 dominant content 后的 purity
+均值，允许多个 atom 指向同一个 content；旧字段 `legacy_codebook_accuracy`
+是它的兼容别名。后续实验以 macro atom purity 为 checkpoint 选择主指标，
+Hungarian one-to-one accuracy 仅作为诊断。扩大码本时必须同时检查 active
+codes、usage perplexity、coverage 和 usage-weighted purity，避免低频 atom
+造成表面高分。
+
+日常快速检查使用固定的 512-sample、style-stratified test 子集：
+
+```bash
+srun --partition=ws-ia -N 1 --gres=gpu:1 --mem=32G --cpus-per-task=4 \
+  --time=00:20:00 \
+  bash -lc '
+    source /home/xuanjie.liu/miniconda3/etc/profile.d/conda.sh
+    conda activate xuanjie
+    cd /home/xuanjie.liu/Projects/variance-versus-invariance
+    python run_evaluation.py \
+      --run <run-name> \
+      --active_checkpoint best \
+      --confusion_mtx \
+      --test_subset_size 512 \
+      --test_subset_seed 0 \
+      --test_subset_strategy style_stratified
+  '
+```
+
+输出使用 checkpoint 和评估范围唯一命名，同时保存 SVG、PNG、JSON，并在
+run 根目录追加 `evaluation_history.csv`。训练 validation 复用完整 validation
+前向，将指标写入 `codebook_epoch_history.csv` 和 `codebook_metrics.png`；四个
+V3 原始 ratio 另写入 `v3_ratio_epoch_history.csv` 和 `v3_ratios.png`。
+
+快速子集只用于趋势监控。正式验收不传任何 subset 参数，始终使用完整 test：
+
 训练完成后在 GPU 节点运行：
 
 ```bash
@@ -97,11 +174,47 @@ srun --partition=ws-ia -N 1 --gres=gpu:1 --mem=32G --cpus-per-task=4 \
     cd /home/xuanjie.liu/Projects/variance-versus-invariance
     python run_codebook_health.py \
       --config logs/<run-name>/config.yaml \
-      --run-dir logs/<run-name>
+      --run-dir logs/<run-name> \
+      --selection-metric macro_atom_purity
   '
 ```
 
-未指定 checkpoint 时，评估工具会从 `loss_epoch_history.csv` 中选择 validation
-total loss 最低且文件仍存在的 checkpoint。结果写入 run 目录下的
-`codebook_health.json`。验收时用相同命令和同一 test 范围重新评估历史
-`4/4`、`512/512` checkpoint，再按 `SETTINGS.md` 的 decision gate 归档。
+`--selection-metric macro_atom_purity` 会读取 `best_macro_atom_purity.json`；
+默认的 `val_loss` 模式仍从 `loss_epoch_history.csv` 选择 validation total loss
+最低且文件存在的 checkpoint。结果写入 run 目录下的 `codebook_health.json`。
+验收时用相同 test 范围评估历史 checkpoint，再按 decision gate 归档。
+
+## 7. 从 checkpoint 续训
+
+checkpoint 中的 epoch 表示已经完成的 epoch；例如加载 `cp_epoch15.pt` 会从
+epoch 16 开始。`epochs` 保持“额外训练轮数”的语义，因此从 epoch 16 续到
+epoch 149 时设置 `epochs: 134`。新 checkpoint 同时保存 optimizer、scheduler
+和 GradScaler；旧 checkpoint 没有后两项时会按完成 epoch 重建 scheduler。
+启用 macro-best 的新 checkpoint 还会保存当前最佳 macro purity、对应 validation
+loss 和 epoch，续训时恢复这些状态。
+
+## 8. Objective schedule 与码本扩展
+
+`loss_schedules` 支持 `relativity`、`weights.recon_loss` 和
+`weights.commit_loss` 的绝对 epoch 分段线性 knots。Resume 不会把 epoch 重新从
+零计；每轮实际值写入 `objective_schedule_epoch_history.csv` 并画到
+`objective_schedules.png`。
+
+`checkpoint_transform.type: expand_ema_codebook` 目前只允许单个 EMA Euclidean
+codebook 的 2x 扩展。它保存 `initialization.json`（源 checkpoint 哈希、shape、
+jitter 和 EMA mass），配置 `validate_before_training: true` 时还会在第一次更新前
+写入完整 `initialization_metrics.json`。变换后 macro-best 状态必须重置。
+
+`checkpoint_transform.type: pca_project_and_expand_ema_codebook` 先对源 atoms
+执行无标签、非加权 float64 PCA，再在 native D 维空间做 2x 对称拆分。PCA
+component 的符号固定，`project_in/project_out` 可通过
+`freeze_vq_projection: true` 全程冻结。使用
+`reset_training_state: true` 时只复制模型语义状态，optimizer、scheduler、scaler、
+epoch 和 macro-best 都从头开始。初始化 validation 也可成为健康门槛内的
+macro-best，以免第一轮更新破坏优秀初始化。
+
+冗余码本验收除 purity、usage 和 dominant-code balance 外，还要检查 native VQ
+空间的 alias within/between ratio 与 nearest-same margin。随后在 v5 使用
+`operation_space: native_vq`；加法器直接读取 D 维 atoms，512D lifted content
+只供 VVI decoder 使用。正式 addition probe 冻结 VVI，训练目标只来自观测到的
+`x_c` VQ code，数字标签仅用于 number-accuracy 诊断。

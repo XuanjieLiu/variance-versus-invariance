@@ -1,3 +1,6 @@
+import csv
+import datetime
+import json
 import os
 from importlib import import_module
 from copy import deepcopy
@@ -9,13 +12,21 @@ from sklearn.manifold import TSNE
 from matplotlib import pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
-from torch.utils.data import DataLoader, Subset
 
 from utils.eval_utils import *
+from utils.codebook_metrics import (
+    batch_confusion_counts,
+    compute_alias_geometry_metrics,
+    compute_assignment_metrics,
+    file_sha256,
+    hungarian_row_permutation,
+    normalized_confusion_matrix,
+)
+from utils.subset_sampling import make_subset_loader
 from model.factory import get_model
 
 
-plt.rc("font", family="Times New Roman")
+plt.rc("font", family="DejaVu Serif")
 
 
 class Tester:
@@ -31,6 +42,7 @@ class Tester:
             self.portion = 1
 
         self.output_dir = os.path.dirname(config["active_checkpoint"])
+        self.checkpoint_path = os.path.abspath(config["active_checkpoint"])
 
         # device
         self.device = torch.device("cpu")
@@ -48,17 +60,22 @@ class Tester:
 
         if os.path.exists(os.path.join(config["data_dir"], "test")):
             self.data_dir = os.path.join(config["data_dir"], "test")
+            self.data_split = "test"
         elif os.path.exists(os.path.join(config["data_dir"], "test.hdf5")):
             self.data_dir = os.path.join(config["data_dir"], "test.hdf5")
+            self.data_split = "test"
         elif os.path.exists(os.path.join(config["data_dir"], "val")):
             self.data_dir = os.path.join(config["data_dir"], "val")
+            self.data_split = "val"
         elif os.path.exists(os.path.join(config["data_dir"], "val.hdf5")):
             self.data_dir = os.path.join(config["data_dir"], "val.hdf5")
+            self.data_split = "val"
 
         self.test_loader = dataloader_module.get_dataloader(
             self.data_dir,
             portion=self.portion,
             batch_size=config["batch_size"],
+            num_workers=config.get("num_workers", 0),
             n_fragments=config["model_config"]["n_fragments"],
             fragment_len=config["model_config"]["fragment_len"],
             shuffle=False,
@@ -74,41 +91,32 @@ class Tester:
     def _apply_test_subset(self):
         subset_size = self.config.get("test_subset_size")
         if subset_size is None or subset_size == "None":
+            self.subset_metadata = {
+                "subset_size": None,
+                "subset_seed": None,
+                "subset_strategy": "full",
+                "style_counts": {},
+            }
             return
 
         subset_size = int(subset_size)
         if subset_size <= 0:
             raise ValueError("test_subset_size must be a positive integer.")
 
-        dataset = self.test_loader.dataset
-        dataset_size = len(dataset)
-        actual_size = min(subset_size, dataset_size)
-
         seed = self.config.get("test_subset_seed", self.config.get("random_seed"))
         if seed is None or seed == "None":
             seed = 0
-
-        generator = torch.Generator()
-        generator.manual_seed(int(seed))
-        indices = torch.randperm(dataset_size, generator=generator)[:actual_size]
-        indices = sorted(indices.tolist())
-
-        loader_kwargs = {
-            "batch_size": self.test_loader.batch_size or self.config["batch_size"],
-            "shuffle": False,
-            "num_workers": self.test_loader.num_workers,
-            "collate_fn": self.test_loader.collate_fn,
-            "pin_memory": self.test_loader.pin_memory,
-            "drop_last": False,
-        }
-        if self.test_loader.num_workers > 0:
-            loader_kwargs["prefetch_factor"] = self.test_loader.prefetch_factor
-            loader_kwargs["persistent_workers"] = self.test_loader.persistent_workers
-
-        self.test_loader = DataLoader(Subset(dataset, indices), **loader_kwargs)
+        strategy = self.config.get("test_subset_strategy", "random")
+        dataset_size = len(self.test_loader.dataset)
+        self.test_loader, self.subset_metadata = make_subset_loader(
+            self.test_loader,
+            subset_size,
+            seed=int(seed),
+            strategy=strategy,
+        )
         print(
-            f"Evaluating on {actual_size}/{dataset_size} test samples "
-            f"(test_subset_seed={seed})."
+            f"Evaluating on {self.subset_metadata['subset_size']}/{dataset_size} "
+            f"{self.data_split} samples (strategy={strategy}, seed={seed})."
         )
 
     def build_model(self):
@@ -124,7 +132,9 @@ class Tester:
             from model.v3_loss import V3Loss as Loss
 
         cp_state_dict = torch.load(
-            config["active_checkpoint"], map_location=self.device
+            config["active_checkpoint"],
+            map_location=self.device,
+            weights_only=False,
         )["model"]
 
         self.model.load_state_dict(cp_state_dict, strict=False)
@@ -144,66 +154,73 @@ class Tester:
         self.ground_truth = []  # (input, content_idx, style_idx)
         self.results = []  # (recon, emb_c, emb_c_vq, emb_s)
         self.sample_vq_indices = []  # vq_indices
-        self.confusion_counts = np.zeros(
-            (self.config["model_config"]["n_atoms"], len(self.C_LIST))
+        confusion_counts = torch.zeros(
+            (self.config["model_config"]["n_atoms"], len(self.C_LIST)),
+            dtype=torch.int64,
+            device=self.device,
         )
+        self.sample_count = 0
         keep_full_outputs = pr_metrics or vis_tsne
 
         n_rounds = (
             5 if self.config["model_config"]["n_fragments"] < len(self.C_LIST) else 1
         )  # to make sure more things are covered, as dataloaders might not use all fragments
-        for round in range(n_rounds):
-            for i, batch in enumerate(tqdm(self.test_loader, desc="Evaluating")):
-                batch_data, content_idx, style_idx = batch
-                batch_data = batch_data.to(self.device)
+        with torch.inference_mode():
+            for round in range(n_rounds):
+                for i, batch in enumerate(tqdm(self.test_loader, desc="Evaluating")):
+                    batch_data, content_idx, style_idx = batch
+                    batch_data = batch_data.to(self.device, non_blocking=True)
+                    self.sample_count += int(batch_data.shape[0])
 
-                with torch.no_grad():
                     recon, emb_c, emb_c_vq, vq_indices, vq_commit_loss, emb_s, *rest = (
-                        self.model(batch_data)
+                        self.model(batch_data, freeze_codebook=True)
                     )
 
-                # detach everything
-                content_idx_np = content_idx.detach().cpu().numpy()
-                vq_indices = vq_indices.detach().cpu().numpy()
-                for atom_idx, content_label in zip(
-                    vq_indices.reshape(-1), content_idx_np.reshape(-1)
-                ):
-                    self.confusion_counts[int(atom_idx), int(content_label)] += 1
+                    confusion_counts += batch_confusion_counts(
+                        vq_indices,
+                        content_idx,
+                        self.config["model_config"]["n_atoms"],
+                        len(self.C_LIST),
+                    )
 
-                if not keep_full_outputs:
-                    continue
+                    if not keep_full_outputs:
+                        continue
 
-                batch_data = batch_data.detach().cpu().numpy()
-                if not self.CONTINUOUS_STYLE:
-                    style_idx = style_idx.detach().cpu().numpy()
-                else:  # continuous-style dataloaders don't give a full batch of style_idx, so we need to generate it
-                    style_idx = list(style_idx)
-                    style_idx = [
-                        [x for fi in range(self.config["model_config"]["n_fragments"])]
-                        for x in style_idx
-                    ]
-                recon = recon.detach().cpu().numpy()
-                emb_c = emb_c.detach().cpu().numpy()
-                emb_c_vq = emb_c_vq.detach().cpu().numpy()
-                emb_s = emb_s.detach().cpu().numpy()
-                for j in range(emb_c.shape[0]):  # for every sample in the batch
-                    for k in range(emb_c.shape[1]):  # for every fragment in the sample
-                        self.ground_truth.append(
-                            (
-                                batch_data[j, k],
-                                content_idx[j][k],
-                                style_idx[j][k],
+                    content_idx_np = content_idx.detach().cpu().numpy()
+                    vq_indices = vq_indices.detach().cpu().numpy()
+                    batch_data = batch_data.detach().cpu().numpy()
+                    if not self.CONTINUOUS_STYLE:
+                        style_idx = style_idx.detach().cpu().numpy()
+                    else:  # continuous-style dataloaders don't give a full batch of style_idx, so we need to generate it
+                        style_idx = list(style_idx)
+                        style_idx = [
+                            [x for fi in range(self.config["model_config"]["n_fragments"])]
+                            for x in style_idx
+                        ]
+                    recon = recon.detach().cpu().numpy()
+                    emb_c = emb_c.detach().cpu().numpy()
+                    emb_c_vq = emb_c_vq.detach().cpu().numpy()
+                    emb_s = emb_s.detach().cpu().numpy()
+                    for j in range(emb_c.shape[0]):  # for every sample in the batch
+                        for k in range(emb_c.shape[1]):  # for every fragment in the sample
+                            self.ground_truth.append(
+                                (
+                                    batch_data[j, k],
+                                    content_idx_np[j][k],
+                                    style_idx[j][k],
+                                )
                             )
-                        )
-                        self.results.append(
-                            (
-                                recon[j, k],
-                                emb_c[j, k],
-                                emb_c_vq[j, k],
-                                emb_s[j, k],
+                            self.results.append(
+                                (
+                                    recon[j, k],
+                                    emb_c[j, k],
+                                    emb_c_vq[j, k],
+                                    emb_s[j, k],
+                                )
                             )
-                        )
-                    self.sample_vq_indices.append(vq_indices[j])
+                        self.sample_vq_indices.append(vq_indices[j])
+
+        self.confusion_counts = confusion_counts.detach().cpu().numpy()
 
         if pr_metrics:
             print(
@@ -343,14 +360,27 @@ class Tester:
     def confusion_mtx(self, output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
-        # plot the confusion matrix of the codebook
-        confusion_matrix = self._normalized_codebook_confusion_matrix()
-        # permute the rows to look like an eye
-        codebook_permutation = Tester._get_confusion_matrix_permutation(
-            confusion_matrix
-        )
-
+        metrics = {
+            **compute_assignment_metrics(self.confusion_counts),
+            **compute_alias_geometry_metrics(self.confusion_counts, self.codebook),
+        }
+        confusion_matrix = normalized_confusion_matrix(self.confusion_counts)
+        codebook_permutation = hungarian_row_permutation(self.confusion_counts)
         confusion_matrix = confusion_matrix[codebook_permutation]
+        checkpoint_name = os.path.splitext(os.path.basename(self.checkpoint_path))[0]
+        if self.subset_metadata["subset_size"] is None:
+            scope = f"{self.data_split}-full"
+        else:
+            scope = (
+                f"{self.data_split}-n{self.subset_metadata['subset_size']}"
+                f"-seed{self.subset_metadata['subset_seed']}"
+                f"-{self.subset_metadata['subset_strategy']}"
+            )
+        prefix = f"codebook_confusion_matrix__{checkpoint_name}__{scope}"
+        svg_path = os.path.join(output_dir, prefix + ".svg")
+        png_path = os.path.join(output_dir, prefix + ".png")
+        json_path = os.path.join(output_dir, prefix + ".json")
+
         plt.figure(figsize=(6, 6))
         sns.heatmap(confusion_matrix, cmap="Purples", vmin=0, vmax=1, cbar=False)
         plt.gca().set_aspect(1)
@@ -361,18 +391,114 @@ class Tester:
 
         plt.xlabel("Content Index", fontsize=20)
         plt.ylabel("Codebook Index", fontsize=20)
-        plt.savefig(
-            os.path.join(output_dir, "codebook_confusion_matrix.svg"),
-            dpi=200,
-            bbox_inches="tight",
+        plt.title(
+            f"{checkpoint_name}\n"
+            f"1:1={metrics['one_to_one_accuracy']:.4f}, "
+            f"macro={metrics['macro_atom_purity']:.4f}"
         )
+        plt.savefig(svg_path, dpi=200, bbox_inches="tight")
+        plt.savefig(png_path, dpi=200, bbox_inches="tight")
+        plt.close()
 
-        print("Codebook Accuracy:", confusion_mtx_acc(confusion_matrix))
+        summary = {
+            "evaluated_at": datetime.datetime.now().astimezone().isoformat(
+                timespec="seconds"
+            ),
+            "checkpoint": self.checkpoint_path,
+            "checkpoint_name": os.path.basename(self.checkpoint_path),
+            "checkpoint_sha256": file_sha256(self.checkpoint_path),
+            "data_split": self.data_split,
+            "sample_count": self.sample_count,
+            "fragment_count": int(self.confusion_counts.sum()),
+            "sampling": self.subset_metadata,
+            "metrics": metrics,
+            "outputs": {
+                "svg": os.path.abspath(svg_path),
+                "png": os.path.abspath(png_path),
+            },
+        }
+        with open(json_path, "w") as output_file:
+            json.dump(summary, output_file, indent=2, sort_keys=True)
+            output_file.write("\n")
+        self._append_evaluation_history(summary, json_path)
+
+        print("Checkpoint:", self.checkpoint_path)
+        print("Evaluation scope:", scope)
+        print("Hungarian one-to-one accuracy:", metrics["one_to_one_accuracy"])
+        print("Macro atom purity:", metrics["macro_atom_purity"])
+        print(
+            "Legacy Codebook Accuracy (compatibility alias):",
+            metrics["legacy_codebook_accuracy"],
+        )
+        print("Saved confusion matrix:", svg_path, "and", png_path)
+
+    def _append_evaluation_history(self, summary, json_path):
+        history_path = os.path.join(self.output_dir, "evaluation_history.csv")
+        fields = (
+            "evaluated_at",
+            "checkpoint_name",
+            "checkpoint_sha256",
+            "data_split",
+            "subset_size",
+            "subset_seed",
+            "subset_strategy",
+            "sample_count",
+            "fragment_count",
+            "one_to_one_accuracy",
+            "macro_atom_purity",
+            "legacy_codebook_accuracy",
+            "codebook_purity",
+            "active_codes",
+            "usage_perplexity",
+            "dominant_label_coverage",
+            "dominant_label_code_count_min",
+            "dominant_label_code_count_max",
+            "dominant_label_code_count_cv",
+            "dominant_label_code_counts",
+            "alias_within_content_rms",
+            "alias_between_content_nn_median",
+            "alias_within_between_ratio",
+            "alias_nearest_same_distance_median",
+            "alias_nearest_other_distance_median",
+            "alias_nearest_same_closer_fraction",
+            "json_path",
+        )
+        row = {
+            "evaluated_at": summary["evaluated_at"],
+            "checkpoint_name": summary["checkpoint_name"],
+            "checkpoint_sha256": summary["checkpoint_sha256"],
+            "data_split": summary["data_split"],
+            "subset_size": (
+                summary["sampling"]["subset_size"]
+                if summary["sampling"]["subset_size"] is not None
+                else "full"
+            ),
+            "subset_seed": (
+                summary["sampling"]["subset_seed"]
+                if summary["sampling"]["subset_seed"] is not None
+                else ""
+            ),
+            "subset_strategy": summary["sampling"]["subset_strategy"],
+            "sample_count": summary["sample_count"],
+            "fragment_count": summary["fragment_count"],
+            "json_path": os.path.abspath(json_path),
+        }
+        row.update(summary["metrics"])
+        if isinstance(row.get("dominant_label_code_counts"), list):
+            row["dominant_label_code_counts"] = json.dumps(
+                row["dominant_label_code_counts"], separators=(",", ":")
+            )
+        write_header = not os.path.exists(history_path) or os.path.getsize(
+            history_path
+        ) == 0
+        with open(history_path, "a", newline="") as history_file:
+            writer = csv.DictWriter(history_file, fieldnames=fields)
+            if write_header:
+                writer.writeheader()
+            writer.writerow({field: row.get(field, "") for field in fields})
 
     def _normalized_codebook_confusion_matrix(self):
-        return self.confusion_counts / (
-            self.confusion_counts.sum(axis=1, keepdims=True) + 1e-7
-        )
+        return normalized_confusion_matrix(self.confusion_counts)
 
     @staticmethod
     def _get_confusion_matrix_permutation(confusion_matrix):

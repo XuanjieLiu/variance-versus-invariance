@@ -5,6 +5,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+V3_RATIO_KEYS = (
+    "content_fragment_to_sample_ratio",
+    "style_sample_to_fragment_ratio",
+    "style_to_content_sample_ratio",
+    "content_to_style_fragment_ratio",
+)
+
+
 def mpd(x):
     """
     Mean pairwise distance
@@ -76,10 +84,23 @@ class V3Loss:
         # compute the losses using the relative variability difference
         r = self.config["relativity"]
 
-        content_loss = F.relu(r - content_frag_var / (content_samp_var + self.eps)) / r
-        style_loss = F.relu(r - style_samp_var / (style_frag_var + self.eps)) / r
-        sample_loss = F.relu(r - style_samp_var / (content_samp_var + self.eps)) / r
-        fragment_loss = F.relu(r - content_frag_var / (style_frag_var + self.eps)) / r
+        content_fragment_to_sample_ratio = content_frag_var / (
+            content_samp_var + self.eps
+        )
+        style_sample_to_fragment_ratio = style_samp_var / (
+            style_frag_var + self.eps
+        )
+        style_to_content_sample_ratio = style_samp_var / (
+            content_samp_var + self.eps
+        )
+        content_to_style_fragment_ratio = content_frag_var / (
+            style_frag_var + self.eps
+        )
+
+        content_loss = F.relu(r - content_fragment_to_sample_ratio) / r
+        style_loss = F.relu(r - style_sample_to_fragment_ratio) / r
+        sample_loss = F.relu(r - style_to_content_sample_ratio) / r
+        fragment_loss = F.relu(r - content_to_style_fragment_ratio) / r
         v3_loss = content_loss + style_loss + sample_loss + fragment_loss
 
         total_loss = 0
@@ -98,6 +119,10 @@ class V3Loss:
             "fragment_loss": fragment_loss,
             "commit_loss": commit_loss,
             "total_loss": total_loss,
+            "content_fragment_to_sample_ratio": content_fragment_to_sample_ratio,
+            "style_sample_to_fragment_ratio": style_sample_to_fragment_ratio,
+            "style_to_content_sample_ratio": style_to_content_sample_ratio,
+            "content_to_style_fragment_ratio": content_to_style_fragment_ratio,
         }
 
         if torch.isnan(total_loss):
@@ -182,15 +207,28 @@ class V3Loss:
         # compute the loss using the relative variance difference
         r = self.config["relativity"]
 
-        content_loss = F.relu(r - content_frag_var / (content_samp_var + self.eps)) / r
-        style_loss = F.relu(r - style_samp_var / (style_frag_var + self.eps)) / r
         if "supersample_content" in self.config and self.config["supersample_content"]:
-            sample_loss = (
-                F.relu(r - style_samp_var_ss / (content_samp_var + self.eps)) / r
-            )
+            style_for_content_sample_ratio = style_samp_var_ss
         else:
-            sample_loss = F.relu(r - style_samp_var / (content_samp_var + self.eps)) / r
-        fragment_loss = F.relu(r - content_frag_var / (style_frag_var + self.eps)) / r
+            style_for_content_sample_ratio = style_samp_var
+
+        content_fragment_to_sample_ratio = content_frag_var / (
+            content_samp_var + self.eps
+        )
+        style_sample_to_fragment_ratio = style_samp_var / (
+            style_frag_var + self.eps
+        )
+        style_to_content_sample_ratio = style_for_content_sample_ratio / (
+            content_samp_var + self.eps
+        )
+        content_to_style_fragment_ratio = content_frag_var / (
+            style_frag_var + self.eps
+        )
+
+        content_loss = F.relu(r - content_fragment_to_sample_ratio) / r
+        style_loss = F.relu(r - style_sample_to_fragment_ratio) / r
+        sample_loss = F.relu(r - style_to_content_sample_ratio) / r
+        fragment_loss = F.relu(r - content_to_style_fragment_ratio) / r
         v3_loss = content_loss + style_loss + sample_loss + fragment_loss
 
         total_loss = 0
@@ -209,6 +247,10 @@ class V3Loss:
             "cross_frag_loss": fragment_loss,
             "commit_loss": vq_commit_loss,
             "total_loss": total_loss,
+            "content_fragment_to_sample_ratio": content_fragment_to_sample_ratio,
+            "style_sample_to_fragment_ratio": style_sample_to_fragment_ratio,
+            "style_to_content_sample_ratio": style_to_content_sample_ratio,
+            "content_to_style_fragment_ratio": content_to_style_fragment_ratio,
         }
 
         if torch.isnan(total_loss):

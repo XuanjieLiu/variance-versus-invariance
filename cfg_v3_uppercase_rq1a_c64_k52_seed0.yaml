@@ -1,0 +1,71 @@
+project: V3
+method: V3
+name: VVI-RQ1A-C64-K52-S0
+
+data_dir: ../data/UppercaseLetters
+dataloader: uppercase_letters_dataloader
+log_dir: ./logs
+device: cuda
+precision: float32
+random_seed: 0
+
+epochs: 200
+batch_size: 32
+num_workers: 4
+debug: false
+debug_portion: 0.01
+log_every_n_steps: 1
+plot_every_n_epochs: 1
+val_every_n_epochs: 1
+save_every_n_epochs: 1
+wandb: false
+
+checkpoint_policy: current_and_best_macro
+save_best_macro_atom_purity: true
+active_checkpoint: null
+load_checkpoint: null
+
+macro_best_health_gate:
+  min:
+    active_codes: 40
+    codebook_purity: 0.2
+    dominant_label_coverage: 18
+    usage_perplexity: 24
+
+model_config:
+  n_channels: 256
+  n_feature: 48
+  n_fragments: 26
+  fragment_len: 32
+  d_emb_c: 64
+  d_emb_s: 512
+  n_atoms: 52
+  threshold_ema_dead_code: 8
+  vq_ema_decay: 0.98
+
+loss_config:
+  relativity: 15
+  weights:
+    recon_loss: 1
+    content_loss: 1
+    style_loss: 1
+    sample_loss: 1
+    fragment_loss: 1
+    commit_loss: 0.1
+
+optimizer_config:
+  optimizer: AdamW
+  lr: 0.001
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1.0e-08
+  momentum: 0.9
+  scheduler: exponential_decay
+  warmup_epochs: 0
+  warmup_factor: 0.1
+  lr_decay_epochs: 20
+  lr_decay_factor: 0.98
+  lr_decay_min_factor: 0.02
+  lr_anneal_epochs: 100
+  lr_anneal_min_factor: 0.01

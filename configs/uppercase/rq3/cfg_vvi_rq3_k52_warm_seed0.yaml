@@ -1,0 +1,73 @@
+log_dir: "./logs"
+wandb: false
+project: "V3"
+name: "VVI-RQ3-K52-WARM-S0"
+debug: false
+debug_portion: 0.01
+random_seed: 0
+
+dataloader: "uppercase_letters_dataloader"
+data_dir: "../data/UppercaseLetters"
+method: "V3"
+
+device: "cuda"
+precision: "float32"
+num_workers: 4
+batch_size: 32
+epochs: 150
+val_every_n_epochs: 1
+log_every_n_steps: 1
+plot_every_n_epochs: 1
+save_every_n_epochs: 1
+save_best_macro_atom_purity: true
+checkpoint_policy: "current_and_best_macro"
+
+load_checkpoint: "./logs/20260801-0615__VVI-S3-C512S512-CB512-S0/cp_best_macro_atom_purity_epoch145.pt"
+active_checkpoint: null
+validate_before_training: true
+checkpoint_transform:
+  type: "expand_ema_codebook"
+  source_atoms: 26
+  target_atoms: 52
+  copies_per_atom: 2
+  jitter_fraction: 0.01
+  random_seed: 0
+  reset_best_macro: true
+
+loss_config:
+  weights:
+    recon_loss: 1
+    content_loss: 1
+    style_loss: 1
+    sample_loss: 1
+    fragment_loss: 1
+    commit_loss: 0.1
+  relativity: 15
+
+model_config:
+  n_channels: 256
+  n_fragments: 26
+  fragment_len: 32
+  n_feature: 48
+  d_emb_c: 512
+  d_emb_s: 512
+  n_atoms: 52
+  threshold_ema_dead_code: 8
+  vq_ema_decay: 0.98
+
+optimizer_config:
+  optimizer: "AdamW"
+  lr: 1.0e-3
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1.0e-8
+  momentum: 0.9
+  weight_decay: 0.1
+  scheduler: "exponential_decay"
+  lr_anneal_epochs: 100
+  lr_anneal_min_factor: 0.01
+  lr_decay_factor: 0.98
+  lr_decay_epochs: 20
+  lr_decay_min_factor: 0.02
+  warmup_epochs: 0
+  warmup_factor: 0.1
