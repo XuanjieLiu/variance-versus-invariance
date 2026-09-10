@@ -32,5 +32,8 @@ These instructions apply to every agent working in this repository.
   artifact directories. Do not add them to Git.
 - New runs use the `current_and_best_macro` policy: retain exactly the latest
   current checkpoint and the best validation macro-atom-purity checkpoint.
+- Explicitly registered periodic snapshots are an exception: user-requested
+  VVI-RQ2-S3 runs keep `cp_snapshot_epoch*.pt` every 25 completed epochs in
+  addition to current/best. Never prune these with current/best rotation.
 - Preserve unrelated user changes. Do not commit or push unless explicitly
   requested.

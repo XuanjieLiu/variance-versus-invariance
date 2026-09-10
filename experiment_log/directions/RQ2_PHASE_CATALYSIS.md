@@ -14,7 +14,8 @@ from .270 at epoch 139 to .633 at 140 and .832 at 145. Reconstruction and
 commitment cost rose during the transition, while the V3 hinge terms stayed near
 their prior zero state. Epochs 141–149 contain eight qualifying epochs out of
 nine (epoch 146 is the exception), and epoch 149 remained high, so the evidence
-supports a new attractor with hysteresis; the run ended one epoch before a full
+supports persistence in the new regime, but does not establish hysteresis; the
+run ended one epoch before a full
 10-epoch stability window could be observed.
 
 Full-test S3 macro-best epoch 145 confirms macro=.834, weighted purity=.820,
@@ -33,6 +34,18 @@ against this particular curriculum run, not a clean causal proof that higher
 relativity can never catalyze a transition. The next test must branch from one
 identical pre-transition checkpoint.
 
+2026-09-10 mechanism update: frozen historical epoch80/140 checkpoints show a
+switch from continuous-style reconstruction to VQ-content reconstruction.
+Shuffling content codes changes the early model's output by only 2.66e-15 MSE,
+but changes the later model's output by .06626. Shuffling style embeddings
+within a same-color page has the opposite effect (.11246 versus 7.57e-5).
+S3/C128 post-transition states reproduce the latter pattern. This supports
+content leakage through the style branch before the semantic regime; it does
+not establish the temporal trigger of the switch. Color information is weaker
+afterward, but low ordinary probe accuracy cannot prove its complete absence.
+See the [mechanism analysis and literature](../analyses/20260910_STYLE_BYPASS_PHASE_TRANSITION.md)
+for sampling, scale-aware probes, interventions, and causal limitations.
+
 ## Evidence runs
 
 | Run | Intervention | Evidence | Conclusion |
@@ -45,12 +58,15 @@ identical pre-transition checkpoint.
 
 | ID | Hypothesis | State | Evidence / test |
 |---|---|---|---|
-| RQ2-H1 | The semantic transition temporarily accepts higher recon/commit cost and exhibits hysteresis. | single-run supported | S3 epochs 139–149 |
+| RQ2-H1 | The semantic transition accepts higher recon/commit cost and persists. | supported observationally in S3/C128; hysteresis untested | S3 near140; C128 near159 |
 | RQ2-H2 | Raising then restoring relativity can advance the transition. | not supported in one confounded run | VVI-RQ2-S1 |
-| RQ2-H3 | A temporary reduction in reconstruction weight can cross the basin boundary. | next matched test | branch pair from S3 epoch 130 |
+| RQ2-H3 | A temporary reduction in reconstruction weight can cross the basin boundary. | untested, secondary priority | matched available initialization required; S3 epoch130 no longer retained |
 | RQ2-H4 | A temporary commitment-weight pulse can reorganize assignments. | untested | commit pulse backlog |
 | RQ2-H5 | VQ rotation trick improves encoder/codebook gradient alignment and transition probability. | untested | rotation-trick backlog |
 | RQ2-H6 | Train/eval normalization-state drift causes reconstruction spikes that obscure phase metrics. | suspected, not isolated | RQ2-S1 current gap=1485; smaller spikes also occur in S3 |
+| RQ2-H7 | The low-purity model bypasses VQ via fragment-specific information in the continuous style branch; the high-purity model uses VQ for shape. | strongly supported at frozen endpoints | historical epoch80/140 within-page channel shuffles; corroborated by S3/C128 post-state |
+| RQ2-H8 | Removing fragment-specific style leakage while retaining page-shared style can catalyze code learning. | testing; MEAN queued | RQ2-S3 CTRL versus MEAN; raw style for V3, recon weight=1 |
+| RQ2-H9 | A100-epoch page-mean warmup creates a semantic state that persists after ordinary decoding returns. | testing | RQ2-S3 W100 versus CTRL/MEAN; absolute epoch100 switch |
 
 ## Tried, rejected, and backlog
 
@@ -60,20 +76,35 @@ identical pre-transition checkpoint.
   a transition and must not be copied to CB4.
 - Observed confound: recurrent validation-reconstruction explosions with normal
   train reconstruction, consistent with unstable BatchNorm running statistics.
-- Backlog order: matched recon pulse, commit pulse, then rotation trick. Each
+- Updated backlog order: matched style-shortcut removal, recon pulse, commit
+  pulse, then rotation trick. Each
   must share an initialization checkpoint with its constant-objective control.
 
 ## Next decision gate
 
-Restore the recoverable S3 epoch-130 checkpoint and run a paired 40-epoch test:
+2026-09-10 user update: prioritize **VVI-RQ2-S3**, three matched200-epoch
+C128/K26 scratch runs: ordinary decoder, permanent page-mean style decoder,
+and100-epoch page-mean warmup then ordinary decoder. See
+[SETTINGS](../SETTINGS.md#vvi-rq2-s3--c128-style-bypass-ablation-and-warmup).
+Compare simultaneous-control onset, leakage, color recovery and post-release
+persistence. Every25 completed epochs retain a checkpoint and fixed26×16 grid.
+The historical-epoch80 proposal below is deferred, not an active task. Persistence
+alone is not a demonstration of hysteresis.
 
-- Control: constant `r=15`, recon weight=1.
-- RQ2-H3: recon weight ramps `1→0.5` over epochs 131–135, holds at .5 through
-  145, and returns to 1 by epoch 155; relativity and commit stay fixed.
+S3 epoch130 is not present in its run directory; do not assume it is recoverable.
+The available historical `uppercase_letters_run2_batch32/cp_epoch80.pt` is a
+measured low-purity, style-bypass initialization for a matched 40–60 epoch pilot:
 
-Both branches use the same seed, data order, optimizer/scheduler state, and
-validation protocol. A catalyst is supported only if its first stable window
-precedes the control by at least five epochs, remains stable after weight
-restoration, and full-test macro>=.75/recon<=.30/eval-train ratio<=2. If the
-control itself cannot reproduce the transition, add RNG-state checkpointing
-before interpreting pulse efficacy.
+- Control: original decoder inputs, constant `r=15`, recon weight=1.
+- RQ2-H8: decoder receives the page-mean style embedding broadcast to each
+  fragment; keep raw embeddings for V3 and all loss weights unchanged.
+
+Match RNG/data order and optimizer/scheduler initialization. Inspect legacy
+checkpoint state first; missing optimizer state requires identical fresh
+optimizers and an explicit warm-start description. Monitor code dependence,
+within-page style dependence, raw losses, style/decoder sensitivity, and color
+reconstruction every 50 steps around onset. Earlier healthy purity together
+with preserved color would support a useful catalyst; purity alone is not
+successful content-style disentanglement. This page-sharing intervention applies
+to same-style UppercaseLetters pages, not mixed-style V5 triplets. The detailed
+protocol is proposed only; no formal run was submitted for this diagnosis.

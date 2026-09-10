@@ -30,6 +30,36 @@ class CSAE(nn.Module):
             else 0,
         )
         self.decoder = Decoder(n_channels, W, H, d_emb_c, d_emb_s)
+        self.decoder_style_mode = config.get("decoder_style_mode", "fragment")
+        if self.decoder_style_mode not in ("fragment", "page_mean", "page_mean_warmup"):
+            raise ValueError(f"Invalid decoder_style_mode: {self.decoder_style_mode}")
+        self.decoder_style_warmup_epochs = int(config.get("decoder_style_warmup_epochs", 100))
+        if self.decoder_style_warmup_epochs < 0:
+            raise ValueError("decoder_style_warmup_epochs must be nonnegative")
+        # Opt-in buffer: old config/checkpoint state dicts remain unchanged.
+        # Saving the epoch in model state makes standalone evaluation reproduce
+        # the checkpoint's decoder regime, including checkpoints during warmup.
+        if "decoder_style_mode" in config:
+            self.register_buffer("_decoder_epoch", torch.tensor(0, dtype=torch.long))
+
+    def set_decoder_epoch(self, epoch):
+        if hasattr(self, "_decoder_epoch"):
+            self._decoder_epoch.fill_(int(epoch))
+
+    @property
+    def active_decoder_style_mode(self):
+        if self.decoder_style_mode == "page_mean_warmup":
+            if int(self._decoder_epoch.item()) < self.decoder_style_warmup_epochs:
+                return "page_mean"
+            return "fragment"
+        return self.decoder_style_mode
+
+    def decoder_style_input(self, emb_s):
+        if self.active_decoder_style_mode == "page_mean":
+            if emb_s.ndim != 3:
+                raise ValueError("page_mean requires [pages, fragments, style_dim]")
+            return emb_s.mean(dim=1, keepdim=True).expand_as(emb_s)
+        return emb_s
 
     def encode(self, x):
         emb_c, emb_s = self.encoder(x)
@@ -91,7 +121,7 @@ class CSAE(nn.Module):
         return native_quantized, indices, commit_loss
 
     def decode(self, emb_c, emb_s):
-        output = self.decoder(emb_c, emb_s)
+        output = self.decoder(emb_c, self.decoder_style_input(emb_s))
 
         return output
 
@@ -100,7 +130,7 @@ class CSAE(nn.Module):
         emb_c_vq, vq_indices, commit_loss = self.quantize(
             emb_c, freeze_codebook=freeze_codebook
         )
-        output = self.decoder(emb_c_vq, emb_s)
+        output = self.decode(emb_c_vq, emb_s)
 
         return output, emb_c, emb_c_vq, vq_indices, commit_loss, emb_s
 

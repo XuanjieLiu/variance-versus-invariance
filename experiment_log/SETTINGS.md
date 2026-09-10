@@ -9,12 +9,93 @@
 | VVI-RQ2-S1 | RQ2 | RQ2-H2 | completed; not supported |
 | VVI-RQ3-S1 | RQ3 | RQ3-H1, RQ3-H3 | completed; successful |
 | VVI-RQ2-S2 | RQ2 | RQ2-H3 | planned; matched branch pair |
+| VVI-RQ2-S3 | RQ2; RQ1-A control | RQ2-H8; RQ2-H9 | active; CTRL/W100 running, MEAN queued (QOS) |
 | VVI-RQ3-S2 | RQ3 | RQ3-H2 | planned; cold-start control |
 | VVI-RQ13-S1 | RQ1-B; RQ3 | RQ1-H5; RQ3-H4 | completed; both VVI gates passed, addition probes failed |
 | VVI-RQ1A-S1 | RQ1-A; RQ2 observation; RQ3 pilot | RQ1-H7; RQ1-H8; RQ1-H9 | completed; seed-0 K26 threshold bracketed in `(64,128]` |
 | VVI-RQ13-S2 | RQ1-A; RQ3 | RQ1-H10; RQ1-H11; RQ3-H6 | completed; C32 failed, C128 transient only |
 | VVI-RQ13-S3 | RQ1-B; RQ3 | RQ1-H12; RQ3-H7 | planned; K52-WARM to K128/D128 generalized expansion |
 | VVI-RQ4-S1 | RQ4 bridge | V5 RQ4-H1; RQ4-H2; RQ4-H3 | transferred to V5; Teacher A gate passed |
+
+## VVI-RQ2-S3 — C128 Style-Bypass Ablation and Warmup
+
+Requested 2026-09-10. Immediate priority over the proposed historical-epoch80
+pair, which remains an unrun follow-up. Question: can removing fragment-specific
+style input improve content learning, and does the benefit persist after release?
+
+**Matched protocol.** Copy the original C128 run's training protocol from
+`20260807-1506__VVI-RQ1A-C128-K26-S0/config.yaml`: scratch epochs0–199, seed0,
+UppercaseLetters20,800 train /2,600 validation /2,600 test pages, all26 letters
+per page, eight colors. CSAE C128/S512, native K26/D128, original BatchNorm,
+EMA .98/dead threshold16, batch32, AdamW lr=.001/weight decay=.1, original
+exponential scheduler, relativity15, recon/four V3 weights1, commit .1. No
+dataset fix, loss schedule, or checkpoint initialization.
+
+| Run ID | Decoder style input | Purpose |
+|---|---|---|
+| VVI-RQ2-C128-K26-CTRL-S0 | raw fragment style, epochs0–199 | contemporary original-C128 reproduction |
+| VVI-RQ2-C128-K26-MEAN-S0 | page mean broadcast, epochs0–199 | permanent removal of fragment-specific style shortcut |
+| VVI-RQ2-C128-K26-W100-S0 | page mean epochs0–99, raw fragment style epochs100–199 | early constraint then release |
+
+Only decoder input is averaged, with gradients preserved. V3 and all probes
+receive raw per-fragment style. At epoch100 do not reset optimizer, scheduler,
+EMA, scaler or weights. Checkpoint model state stores decoder epoch for correct
+standalone evaluation and resume. The MEAN and W100 arms should track before
+epoch100; GPU numerical variation can prevent bitwise trajectory equality.
+
+**Probes.** Reuse full-validation forwards each epoch, without extra model
+passes or test labels. Fixed512 pages,64 per color; disjoint256 fit/256 score
+pages. Never split fragments of one page across fit/score. Native VQ→style uses
+Laplace-smoothed code/style counts (accuracy/CE). Raw style→content, style→style
+positive control, and pre-VQ content→style use raw and PCA-whitened64 ridge
+readouts, ridge=.01/std floor1e-7. Preprocessing uses fit pages only. Labels do
+not alter model gradients, switch timing, or checkpoint ranking. Chance is1/8
+for color and1/26 for content; probe accuracy is not exact mutual information.
+Record full-validation four raw MPDs and per-hinge active-batch fractions too.
+Outputs: `disentanglement_probe_protocol.json`, `disentanglement_probe_history.csv`,
+`disentanglement_probes.png`, plus existing loss/codebook/V3 histories.
+
+**Snapshots and images.** User-authorized permanent snapshots at completed
+epochs25/50/75/100/125/150/175/200 (internal epoch24/49/74/99/124/149/174/199):
+`cp_snapshot_epoch<N>.pt`, complete optimizer/scheduler/scaler/model state.
+Current and health-gated macro-best still rotate: at most8+2 checkpoint files.
+At the same epochs render fixed26×16 original/recon pairs (eight fixed validation
+pages, one per color). Annotate code→label using that epoch's full-validation
+Hungarian mapping. Save PNG/JSON/mapping CSV in `reconstruction_diagnostics/`.
+Also draw epoch0 and100; the epoch99 snapshot/grid is the pre-release reference.
+All three runs use identical images. Existing macro-best health gate is unchanged.
+
+**Decision gate.** Compare onset against concurrent CTRL, not only historical
+onset~160. Existing stable-phase definition: at least8 of10 consecutive epochs
+with macro>=.70, active=26, perplexity>=20, coverage>=24. Final acceptance uses
+full test on macro-best and current, macro>=.75, active=26, perplexity>=20,
+coverage>=24, recon<=.30. Scalar recon/purity alone do not establish color recovery.
+
+- MEAN improves purity but W100 loses it after release: continuing constraint is
+  needed; not evidence of a persistent semantic state.
+- W100 retains healthy purity and improves color after release: promising warmup.
+- High purity with brown reconstructions: content-only gain; style remains broken.
+- No gain: negative for this seed/protocol; test seeds before general conclusions.
+
+The positive style→style control distinguishes low content leakage from complete
+style failure. Low geometric variance does not prove low semantic information.
+Page sharing requires same-style fragments: MEAN is not a drop-in V5 mixed-style
+triplet model; W100 eventually returns to ordinary per-image decoding.
+
+Tests/smokes only on compute GPU; smoke artifacts removed, never entered in the
+ledger. Formal requests: ws-ia,1GPU,32GB,4CPU,8h each. No commit/push.
+
+Preflight passed2026-09-10 on ws-l1-011 (RTX5000 Ada):42 unit tests; all three
+decoder regimes; warmup epoch99→100; full-validation probe/grid generation;
+strict snapshot reload preserves decoder regime and resume state; permanent
+snapshots survive current/best rotation. Three initial model hashes matched
+`39cf3f48…0a128`. Disposable smoke directories were removed (~1.9GiB).
+Each Slurm job saves submitted config/checksum, source hashes/archive, Git SHA,
+dirty status and tracked diff under its run's `reproducibility/` directory.
+
+Submitted13:48+04:00: CTRL183134 on ws-l1-001; W100183133 on ws-l1-011;
+MEAN183135 queued with `QOSMaxJobsPerUserLimit` (two running jobs per user).
+Do not cancel unrelated jobs or bypass scheduler policy to force concurrency.
 
 ## VVI-RQ4-S1 - AGUSA dependency bridge
 

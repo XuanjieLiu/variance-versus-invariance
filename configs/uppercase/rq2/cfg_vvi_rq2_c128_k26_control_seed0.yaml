@@ -1,0 +1,77 @@
+# VVI-RQ2-S3: matched scratch control; original C128/K26 seed-0 protocol.
+name: VVI-RQ2-C128-K26-CTRL-S0
+project: V3
+method: V3
+random_seed: 0
+device: cuda
+precision: float32
+debug: false
+debug_portion: 0.01
+wandb: false
+dataloader: uppercase_letters_dataloader
+data_dir: ../data/UppercaseLetters
+batch_size: 32
+num_workers: 4
+epochs: 200
+log_dir: ./logs
+load_checkpoint: null
+active_checkpoint: null
+log_every_n_steps: 1
+val_every_n_epochs: 1
+plot_every_n_epochs: 1
+save_every_n_epochs: 1
+snapshot_every_n_epochs: 25
+checkpoint_policy: current_and_best_macro
+save_best_macro_atom_purity: true
+macro_best_health_gate:
+  min:
+    active_codes: 24
+    codebook_purity: 0.2
+    dominant_label_coverage: 18
+    usage_perplexity: 18
+model_config:
+  d_emb_c: 128
+  d_emb_s: 512
+  n_atoms: 26
+  n_channels: 256
+  n_feature: 48
+  n_fragments: 26
+  fragment_len: 32
+  threshold_ema_dead_code: 16
+  vq_ema_decay: 0.98
+  decoder_style_mode: fragment
+loss_config:
+  relativity: 15
+  monitor_raw_mpd: true
+  weights:
+    recon_loss: 1
+    content_loss: 1
+    style_loss: 1
+    sample_loss: 1
+    fragment_loss: 1
+    commit_loss: 0.1
+optimizer_config:
+  optimizer: AdamW
+  lr: 0.001
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1.0e-8
+  momentum: 0.9
+  weight_decay: 0.1
+  scheduler: exponential_decay
+  warmup_epochs: 0
+  warmup_factor: 0.1
+  lr_decay_epochs: 20
+  lr_decay_factor: 0.98
+  lr_decay_min_factor: 0.02
+  lr_anneal_epochs: 100
+  lr_anneal_min_factor: 0.01
+disentanglement_probes:
+  enabled: true
+  pages: 512
+  seed: 0
+  pca_components: 64
+  ridge: 0.01
+  reconstruction_every_n_epochs: 25
+  extra_grid_epochs: [0, 100]
+  switch_epochs: [100]

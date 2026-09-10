@@ -31,6 +31,7 @@ from utils.checkpoint_transform import (
     pca_project_and_expand_ema_codebook_state,
 )
 from utils.loss_logging import LossLogger
+from utils.disentanglement_monitor import DisentanglementMonitor
 from utils.objective_schedule import apply_loss_schedules
 from utils.objective_schedule_logging import ObjectiveScheduleLogger
 from utils.v3_ratio_logging import V3RatioLogger
@@ -151,6 +152,14 @@ class Trainer:
             shuffle=False,
         )
         logging.info("Validation dataloader ready.")
+        self.disentanglement_monitor = None
+        if config.get("disentanglement_probes", {}).get("enabled", False):
+            if not config["loss_config"].get("monitor_raw_mpd", False):
+                raise ValueError("disentanglement_probes requires monitor_raw_mpd")
+            self.disentanglement_monitor = DisentanglementMonitor(
+                self.log_dir, self.val_loader.dataset,
+                config["disentanglement_probes"], config["model_config"]["n_atoms"], self.C_LIST,
+            )
 
     def build_model(self):
         """
@@ -446,6 +455,9 @@ class Trainer:
                     stage="initialization",
                 )
         for epoch in range(self.start_epoch, end_epoch + 1):
+            self.model.set_decoder_epoch(epoch)
+            logging.info("DECODER - Epoch [%s/%s] | style_mode=%s", epoch, end_epoch,
+                         self.model.active_decoder_style_mode)
             objective_values = apply_loss_schedules(
                 self.loss.config,
                 config.get("loss_schedules"),
@@ -585,7 +597,7 @@ class Trainer:
             running_losses_val = None
             codebook_metrics_val = None
             if epoch % config["val_every_n_epochs"] == 0:
-                validation = self._collect_validation()
+                validation = self._collect_validation(epoch, global_step)
                 running_losses_val = validation["losses"]
                 validation_v3_ratios = validation["v3_ratios"]
                 codebook_metrics_val = validation["codebook_metrics"]
@@ -726,7 +738,17 @@ class Trainer:
                         codebook_metrics_val["macro_atom_purity"],
                     )
 
-    def _collect_validation(self):
+            snapshot_every = int(config.get("snapshot_every_n_epochs", 0))
+            if snapshot_every > 0 and (epoch + 1) % snapshot_every == 0:
+                self._save_periodic_checkpoint(epoch)
+
+    def _save_periodic_checkpoint(self, epoch):
+        snapshot_path = os.path.join(self.log_dir, f"cp_snapshot_epoch{epoch}.pt")
+        torch.save(self._checkpoint_state(epoch), snapshot_path + ".tmp")
+        os.replace(snapshot_path + ".tmp", snapshot_path)
+        logging.info("Permanent periodic checkpoint saved at %s", snapshot_path)
+
+    def _collect_validation(self, epoch=None, global_step=0):
         config = self.config
         running_losses = {}
         running_v3_ratios = {}
@@ -736,6 +758,9 @@ class Trainer:
             device=self.device,
         )
         sample_count = 0
+        monitor = getattr(self, "disentanglement_monitor", None) if epoch is not None else None
+        if monitor is not None:
+            monitor.begin(epoch, global_step, self.model.active_decoder_style_mode)
         self.model.eval()
         with torch.inference_mode():
             for batch_data, c_labels, s_labels in self.val_loader:
@@ -758,6 +783,9 @@ class Trainer:
                     emb_s,
                     batch_data,
                 )
+                if monitor is not None:
+                    monitor.collect(batch_data, outputs, emb_c, emb_s, vq_indices,
+                                    c_labels, s_labels, self.loss.last_statistics)
                 ratios = {name: loss_outputs.pop(name) for name in V3_RATIO_KEYS}
                 for name, value in loss_outputs.items():
                     running_losses[name] = running_losses.get(name, 0.0) + value.item()
@@ -778,6 +806,11 @@ class Trainer:
             name: value / batch_count for name, value in running_v3_ratios.items()
         }
         confusion_counts_cpu = confusion_counts.cpu().numpy()
+        if monitor is not None:
+            probe_metrics = monitor.finish(confusion_counts_cpu, self.device)
+            logging.info("VALIDATION PROBES - Epoch %s | %s", epoch, probe_metrics)
+            if config["wandb"]:
+                self._write_summary(global_step, epoch, probe_metrics, "val_probe")
         metrics = {
             **compute_assignment_metrics(confusion_counts_cpu),
             **compute_alias_geometry_metrics(
@@ -822,7 +855,7 @@ class Trainer:
             "best_macro_atom_purity": self.best_macro_atom_purity,
             "best_macro_val_loss": self.best_macro_val_loss,
             "best_macro_epoch": self.best_macro_epoch,
-            "best_macro_stage": self.best_macro_stage,
+            "best_macro_stage": getattr(self, "best_macro_stage", None),
         }
 
     @staticmethod

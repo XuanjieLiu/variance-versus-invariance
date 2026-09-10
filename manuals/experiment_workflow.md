@@ -163,6 +163,26 @@ V3 原始 ratio 另写入 `v3_ratio_epoch_history.csv` 和 `v3_ratios.png`。
 
 快速子集只用于趋势监控。正式验收不传任何 subset 参数，始终使用完整 test：
 
+需要逐 fragment 诊断重构时，可以先用完整 test 建立 Hungarian code-label
+mapping，再从每个 style 取一个样本生成原图/重构并排网格：
+
+```bash
+srun --partition=ws-ia -N 1 --gres=gpu:1 --mem=32G --cpus-per-task=4 \
+  --time=00:30:00 \
+  bash -lc '
+    source /home/xuanjie.liu/miniconda3/etc/profile.d/conda.sh
+    conda activate xuanjie
+    cd /home/xuanjie.liu/Projects/variance-versus-invariance
+    python run_reconstruction_grid.py \
+      --run <run-name> \
+      --active_checkpoint best
+  '
+```
+
+输出 PNG、Hungarian mapping CSV 和逐格 JSON。重构格标注
+`quantized code -> Hungarian mapped label`；绿色表示与该行真实 content 一致，
+红色表示不一致。
+
 训练完成后在 GPU 节点运行：
 
 ```bash
@@ -218,3 +238,29 @@ macro-best，以免第一轮更新破坏优秀初始化。
 `operation_space: native_vq`；加法器直接读取 D 维 atoms，512D lifted content
 只供 VVI decoder 使用。正式 addition probe 冻结 VVI，训练目标只来自观测到的
 `x_c` VQ code，数字标签仅用于 number-accuracy 诊断。
+
+## 9. Page-mean decoder、泄漏 probes 与周期快照
+
+`model_config.decoder_style_mode` 支持 `fragment`、`page_mean` 和
+`page_mean_warmup`；最后一种配合 `decoder_style_warmup_epochs: 100`，
+epoch0–99使用page mean，epoch100起恢复逐fragment。只改decoder输入，
+不改变原始`emb_s`、V3 loss输入、EMA、optimizer或scheduler。新增run的
+model state保存`_decoder_epoch`，手工evaluation加载ckpt即可恢复对应模式。
+旧config/旧checkpoint不增加该字段，继续兼容。
+
+启用`disentanglement_probes.enabled`和`loss_config.monitor_raw_mpd`后，
+每轮复用full validation记录detached probes，不增加模型前向。协议及固定
+fit/score/grid文件名写入`disentanglement_probe_protocol.json`；结果写入
+`disentanglement_probe_history.csv`和`disentanglement_probes.png`。
+raw/whitened都保留；随机水平不是“无信息”的证明，要看style→style正向对照。
+
+VVI-RQ2-S3按用户要求设置`snapshot_every_n_epochs: 25`，完成第25/50/…/200
+轮时保留`cp_snapshot_epoch24.pt`/`cp_snapshot_epoch49.pt`/…/
+`cp_snapshot_epoch199.pt`。不参与current/best轮换删除，每个run最多
+8个周期快照+current+best共10个ckpt；不对旧run追溯创建或删除快照。
+
+`reconstruction_diagnostics/`保存同epoch的26行×16列原图/recon配对图、
+逐格JSON和Hungarian mapping CSV，mapping来自当轮完整validation。epoch0和100
+额外输出图；epoch99的周期图为切换前最后一轮图。三个run使用相同图片。
+切换和checkpoint保存均用绝对epoch，resume不能重新开始warmup。
+MEAN解码要求页内fragment共享style，不得用于V5混合style triplet。

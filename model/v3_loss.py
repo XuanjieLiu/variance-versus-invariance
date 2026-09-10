@@ -103,6 +103,17 @@ class V3Loss:
         fragment_loss = F.relu(r - content_to_style_fragment_ratio) / r
         v3_loss = content_loss + style_loss + sample_loss + fragment_loss
 
+        if self.config.get("monitor_raw_mpd", False):
+            self.last_statistics = {
+                "content_fragment_mpd": content_frag_var.detach(),
+                "content_sample_mpd": content_samp_var.detach(),
+                "style_fragment_mpd": style_frag_var.detach(),
+                "style_sample_mpd": style_samp_var.detach(),
+                **{f"{name}_hinge_active": (value.detach() > 0).float()
+                   for name, value in (("content", content_loss), ("style", style_loss),
+                                       ("sample", sample_loss), ("fragment", fragment_loss))},
+            }
+
         total_loss = 0
         for k, v in self.config["weights"].items():
             if locals().get(k) is None:

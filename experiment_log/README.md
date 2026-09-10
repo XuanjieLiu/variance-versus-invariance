@@ -7,7 +7,7 @@ experiments; `ACTIVE_RUNS.md` and `ARCHIVE.md` own run lifecycle state.
 | Direction | Current conclusion | Confidence | Active setting | Next decision |
 |---|---|---|---|---|
 | [RQ1: content width and native low-D VQ](directions/RQ1_LOW_DIMENSION.md) | At flat K128 scratch, C32 fails while C128 reaches one transient `.771` macro checkpoint and then decays. Since the application only needs a compact discrete interface, keep the encoder wide and target `vq_codebook_dim=128`. | high | none | Warm-expand K52-WARM to K128/D128 instead of continuing either scratch run. |
-| [RQ2: phase catalysis](directions/RQ2_PHASE_CATALYSIS.md) | The `15→25→15` scratch run did not transition and developed severe train/eval reconstruction mismatch; this run does not support relativity curriculum as a catalyst. | medium negative; no matched control | none | Branch a constant-r control and a recon-weight pulse from the same S3 pre-transition checkpoint. |
+| [RQ2: phase catalysis](directions/RQ2_PHASE_CATALYSIS.md) | Frozen early/late checkpoints show reconstruction switching from a continuous-style shortcut to VQ content; color fidelity degrades. The trigger remains unknown. | high for endpoints; catalyst being tested | VVI-RQ2-S3: CTRL/W100 running; MEAN QOS-queued | Matched200-epoch C128/K26 CTRL, page-mean,100-epoch mean warmup; compare onset, leakage, color and persistence. |
 | [RQ3: joint K/D scaling](directions/RQ3_CODEBOOK_SCALING.md) | Warm K52 and PCA-warm K104 succeed, while flat K128 scratch is unstable even at C128. Healthy usage is not enough: semantic parent structure must be inherited or explicitly constrained. | high | none | Generalize the successful PCA-warm transform from K52 to K128 with D128. |
 | [RQ4 bridge: arithmetic-guided unseen-style adaptation](directions/RQ4_ARITHMETIC_STYLE_ADAPTATION.md) | V5 Teacher A passed its gate; V5 is canonical for all AGUSA hypotheses and conclusions. | teacher qualified | none in VVI | Follow the [V5 dashboard](../../v5/EXPERIMENT_SUMMARY.md): matched Teacher B, then OOD controls. |
 
@@ -43,12 +43,17 @@ experiments; `ACTIVE_RUNS.md` and `ARCHIVE.md` own run lifecycle state.
 
 ## Prioritized next experiment queue
 
+Current user priority: **VVI-RQ2-S3 three-arm style-bypass ablation**, with
+25-epoch reconstruction grids and permanent snapshots. Other proposals below
+remain deferred until this experiment is reviewed.
+
 1. **VVI-RQ13-S3 K52-WARM→K128/D128.** Generalize local warm expansion while
    keeping the discrete interface 128D and the encoder/decoder pathway 512D.
 2. **VVI-RQ1A C96/K26 midpoint.** Narrow `(64,128]`, then replicate the boundary.
 3. **Alias-invariant arithmetic objective.** Explain and remove the multimodal
    per-image alias target before interpreting another small-adder capacity test.
-4. **VVI-RQ2-S2 matched branch pair.** Restore S3 epoch 130 and compare constant
-   reconstruction weight against the pre-registered reconstruction pulse.
+4. **VVI-RQ2 matched branch pair.** Use the retained historical epoch80 and
+   compare original decoding with page-mean style decoding to test continuous
+   content leakage. See the [2026-09-10 mechanism analysis](analyses/20260910_STYLE_BYPASS_PHASE_TRANSITION.md).
 5. **VVI-RQ3-S2 full-width K52 cold start.** The C64/K52 pilot failed but is
    content-width-confounded; retain the C512 control only as a mechanism test.
