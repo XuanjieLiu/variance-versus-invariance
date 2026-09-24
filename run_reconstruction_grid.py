@@ -161,9 +161,9 @@ def render_grid(
                 transform=recon_axis.transAxes,
                 ha="left",
                 va="top",
-                fontsize=5.5,
-                color="lime" if correct else "#ff4040",
-                bbox={"facecolor": "black", "alpha": 0.72, "pad": 1.0},
+                fontsize=6.5,
+                color="#166534" if correct else "#b91c1c",
+                bbox={"facecolor": "white", "edgecolor": "none", "alpha": 1.0, "pad": 1.0},
             )
             if style_index == 0:
                 original_axis.text(
@@ -196,14 +196,17 @@ def render_grid(
             )
 
     fig.suptitle(
-        f"{checkpoint_name} | Hungarian mapping from {mapping_scope} "
+        f"{checkpoint_name}\nHungarian mapping from {mapping_scope} "
         f"(accuracy={hungarian_accuracy:.4f})\n"
         "Recon annotation: quantized code -> mapped label; green=correct, red=mismatch",
         fontsize=12,
-        y=0.999,
+        y=0.995,
     )
+    # Reserve physical space for three title lines and the style column headers;
+    # a fixed percentage overlapped these on the shorter 10/16-content grids.
+    header_margin = min(0.35, 1.2 / fig.get_figheight())
     fig.subplots_adjust(
-        left=0.035, right=0.997, bottom=0.005, top=0.975, wspace=0.02, hspace=0.06
+        left=0.035, right=0.997, bottom=0.005, top=1 - header_margin, wspace=0.02, hspace=0.06
     )
     fig.savefig(output_path, dpi=180, facecolor="white")
     plt.close(fig)
@@ -216,6 +219,7 @@ def main():
     parser.add_argument("--active_checkpoint")
     parser.add_argument("--config")
     parser.add_argument("--output_dir")
+    parser.add_argument("--figure17", action="store_true", help="Posthoc codebook x class-mean style recombination")
     args = parser.parse_args()
 
     resolved = resolve_evaluation_paths(
@@ -243,7 +247,22 @@ def main():
     model = get_model(config["dataloader"], config["model_config"]).to(device)
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model"])
+    if hasattr(model, "set_decoder_epoch"):
+        model.set_decoder_epoch(checkpoint.get("epoch", 0))
     model.eval()
+
+    # Local imports avoid a cycle with the training monitor's grid renderer.
+    from utils.foreground_color import ForegroundColorAccumulator, save_mask_grid
+    from utils.confusion_diagnostics import content_style_counts, save_confusion_diagnostics
+    diagnostics = config.get("disentanglement_probes", {})
+    colors = ForegroundColorAccumulator(style_names) if diagnostics.get("foreground_color_metrics") else None
+    balanced = diagnostics.get("balanced_confusion_matrix", False)
+    pairs = torch.zeros((len(content_names), len(style_names)), dtype=torch.int64, device=device)
+    style_sums = torch.zeros((len(style_names), config["model_config"]["d_emb_s"]), dtype=torch.float64, device=device)
+    style_counts = torch.zeros(len(style_names), dtype=torch.int64, device=device)
+    if config.get("dataset_manifest_sha256"):
+        if file_sha256(Path(config["data_dir"]) / "manifest.json") != config["dataset_manifest_sha256"]:
+            raise ValueError("Dataset manifest checksum mismatch")
 
     counts = torch.zeros(
         (config["model_config"]["n_atoms"], len(content_names)),
@@ -252,9 +271,17 @@ def main():
     )
     sample_count = 0
     with torch.inference_mode():
-        for batch_data, content_idx, _ in loader:
+        for batch_data, content_idx, style_idx in loader:
             batch_data = batch_data.to(device, non_blocking=True)
             outputs = model(batch_data, freeze_codebook=True)
+            if colors is not None:
+                colors.update(batch_data, outputs[0], style_idx)
+            if balanced:
+                pairs += content_style_counts(content_idx.to(device), style_idx.to(device), len(content_names), len(style_names))
+            if args.figure17:
+                ids = style_idx.to(device).flatten()
+                style_sums.index_add_(0, ids, outputs[5].reshape(-1, outputs[5].shape[-1]).double())
+                style_counts += torch.bincount(ids, minlength=len(style_names))
             counts += batch_confusion_counts(
                 outputs[3],
                 content_idx,
@@ -265,6 +292,8 @@ def main():
 
     counts_np = counts.cpu().numpy()
     metrics = compute_assignment_metrics(counts_np)
+    from utils.codebook_metrics import grouped_mapping_metrics
+    group_metrics = grouped_mapping_metrics(counts_np, getattr(dataloader_module, 'CONTENT_GROUPS', {}))
     code_to_label, label_to_code, hungarian_accuracy = compute_hungarian_mapping(
         counts_np
     )
@@ -281,10 +310,10 @@ def main():
     originals = originals.detach().cpu()
 
     checkpoint_stem = checkpoint_path.stem
-    prefix = f"reconstruction_grid__{checkpoint_stem}__test-full-map__8styles"
+    prefix = f"reconstruction_grid__{checkpoint_stem}__test-full-map__8styles__viz-v2"
     png_path = output_dir / f"{prefix}.png"
     json_path = output_dir / f"{prefix}.json"
-    mapping_csv_path = output_dir / f"hungarian_mapping__{checkpoint_stem}__test-full.csv"
+    mapping_csv_path = output_dir / f"hungarian_mapping__{checkpoint_stem}__test-full__viz-v2.csv"
     write_mapping_csv(mapping_csv_path, counts_np, code_to_label, content_names)
     cell_records = render_grid(
         png_path,
@@ -303,6 +332,7 @@ def main():
         np.mean([record["mapping_correct"] for record in cell_records])
     )
     summary = {
+        "visualization_version": 2,
         "evaluated_at": datetime.datetime.now().astimezone().isoformat(
             timespec="seconds"
         ),
@@ -345,7 +375,39 @@ def main():
             "mapping_csv": str(mapping_csv_path.resolve()),
         },
     }
+    if colors is not None:
+        summary["foreground_color"] = colors.result()
+        save_mask_grid(output_dir / f"foreground_mask__{checkpoint_stem}__test.png",
+                       originals, content_indices, content_names, style_names)
+    if balanced:
+        matrix_prefix = output_dir / f"codebook_confusion_matrix__{checkpoint_stem}__test-full-balanced-column-normalized__viz-v2"
+        save_confusion_diagnostics(matrix_prefix, counts_np, pairs.cpu().numpy(), content_names, style_names,
+            f"{run_dir.name}\n{checkpoint_path.name} | test | {sample_count:,} pages",
+            metadata={"checkpoint": str(checkpoint_path), "checkpoint_sha256": summary["checkpoint_sha256"],
+                      "split": "test", "pages": sample_count,
+                      "content_group_metrics": group_metrics,
+                      "dataset_manifest_sha256": config.get("dataset_manifest_sha256")},
+            code_to_label=code_to_label)
+        summary["outputs"]["balanced_confusion_prefix"] = str(matrix_prefix)
+    if args.figure17:
+        if bool((style_counts == 0).any()) or len(label_to_code) != len(content_names):
+            raise ValueError("Figure17 needs every style and a matched code per content")
+        means = (style_sums / style_counts[:, None]).float()
+        code_ids = [label_to_code[i] for i in range(len(content_names))]
+        with torch.inference_mode():
+            atoms = model.vq.codebook[code_ids]
+            if atoms.shape[-1] != config["model_config"]["d_emb_c"]:
+                raise ValueError("Figure17 currently requires native full-dimensional VQ")
+            mixed = model.decode(atoms[None].expand(len(style_names), -1, -1),
+                                 means[:, None].expand(-1, len(content_names), -1)).cpu()
+        path = output_dir / f"code_style_recombination__{checkpoint_stem}__test-full__viz-v2.png"
+        render_recombination(path, mixed, content_names, style_names, code_ids, checkpoint_path.name)
+        summary['figure17'] = {'output': str(path), 'style_fragment_counts': style_counts.cpu().tolist(),
+                               'code_ids_in_content_order': code_ids,
+                               'style_means': means.cpu().tolist(),
+                               'protocol': 'full-test class means; labels used only posthoc; not paired reconstruction'}
     with json_path.open("w", encoding="utf-8") as output_file:
+        summary['content_group_metrics'] = group_metrics
         json.dump(summary, output_file, indent=2, sort_keys=True)
         output_file.write("\n")
 
@@ -357,6 +419,23 @@ def main():
     print("Saved grid:", png_path.resolve())
     print("Saved mapping:", mapping_csv_path.resolve())
     print("Saved metadata:", json_path.resolve())
+
+
+def render_recombination(path, images, contents, styles, code_ids, checkpoint):
+    fig, axes = plt.subplots(len(contents), len(styles), figsize=(12, max(10, len(contents))), squeeze=False)
+    for s, style in enumerate(styles):
+        for c, label in enumerate(contents):
+            ax = axes[c, s]
+            ax.imshow(image_for_plot(images[s, c]))
+            ax.axis('off')
+            if c == 0:
+                ax.set_title(style)
+            if s == 0:
+                ax.text(-.1, .5, f'{label} / q{code_ids[c]:02d}', transform=ax.transAxes, ha='right')
+    fig.suptitle(f'{checkpoint}\nCodebook x class-mean style (posthoc labels; not paired reconstruction)')
+    fig.tight_layout(rect=(.03,0,1,.95))
+    fig.savefig(path,dpi=180)
+    plt.close(fig)
 
 
 if __name__ == "__main__":

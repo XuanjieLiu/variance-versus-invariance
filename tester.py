@@ -19,6 +19,7 @@ from utils.codebook_metrics import (
     compute_alias_geometry_metrics,
     compute_assignment_metrics,
     file_sha256,
+    grouped_mapping_metrics,
     hungarian_row_permutation,
     normalized_confusion_matrix,
 )
@@ -57,6 +58,7 @@ class Tester:
 
         self.C_LIST = dataloader_module.C_LIST
         self.S_LIST = dataloader_module.S_LIST
+        self.content_groups = getattr(dataloader_module, 'CONTENT_GROUPS', {})
 
         if os.path.exists(os.path.join(config["data_dir"], "test")):
             self.data_dir = os.path.join(config["data_dir"], "test")
@@ -412,6 +414,8 @@ class Tester:
             "fragment_count": int(self.confusion_counts.sum()),
             "sampling": self.subset_metadata,
             "metrics": metrics,
+            "content_group_metrics": grouped_mapping_metrics(
+                self.confusion_counts, getattr(self, 'content_groups', {})),
             "outputs": {
                 "svg": os.path.abspath(svg_path),
                 "png": os.path.abspath(png_path),
@@ -484,6 +488,9 @@ class Tester:
             "json_path": os.path.abspath(json_path),
         }
         row.update(summary["metrics"])
+        group_values = summary.get('content_group_metrics', {}).get('groups', {})
+        fields += tuple(f'{name}_mapping_accuracy' for name in group_values)
+        row.update({f'{name}_mapping_accuracy': values['accuracy'] for name, values in group_values.items()})
         if isinstance(row.get("dominant_label_code_counts"), list):
             row["dominant_label_code_counts"] = json.dumps(
                 row["dominant_label_code_counts"], separators=(",", ":")

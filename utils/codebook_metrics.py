@@ -176,6 +176,42 @@ def compute_alias_geometry_metrics(confusion_counts, codebook):
     }
 
 
+def grouped_mapping_metrics(confusion_counts, groups, code_to_label=None):
+    """Subset accuracies under ONE global Hungarian assignment, never rematch.
+
+    Groups map display names to integer content IDs. Unmatched labels count as
+    incorrect, and absent labels/groups are reported as None rather than success.
+    """
+    counts = np.asarray(confusion_counts, dtype=np.float64)
+    if (counts.ndim != 2 or not np.isfinite(counts).all() or np.any(counts < 0)
+            or counts.sum() <= 0):
+        raise ValueError('Expected finite nonnegative confusion counts')
+    if code_to_label is None:
+        codes, labels = linear_sum_assignment(-counts)
+        code_to_label = dict(zip(codes.tolist(), labels.tolist()))
+    mapping = {int(q): int(c) for q, c in code_to_label.items()}
+    if (len(set(mapping.values())) != len(mapping)
+            or any(q < 0 or q >= counts.shape[0] or c < 0 or c >= counts.shape[1]
+                   for q, c in mapping.items())):
+        raise ValueError('Invalid one-to-one global mapping')
+    totals, correct = counts.sum(0), np.zeros(counts.shape[1])
+    for code, label in mapping.items():
+        correct[label] = counts[code, label]
+    result, used = {}, set()
+    for name, ids in groups.items():
+        if (not ids or any(not isinstance(i, (int, np.integer)) or not 0 <= i < counts.shape[1] for i in ids)
+                or len(set(ids)) != len(ids) or used.intersection(ids)):
+            raise ValueError(f'Invalid or overlapping content group: {name}')
+        used.update(ids)
+        total, hits = float(totals[ids].sum()), float(correct[ids].sum())
+        result[name] = {'content_ids': list(map(int, ids)), 'fragment_count': int(total),
+                        'correct_count': int(hits), 'accuracy': hits / total if total else None}
+    return {'mapping_code_to_label': {str(q): c for q, c in mapping.items()},
+            'mapping_scope': 'one global Hungarian assignment; no group/style rematching',
+            'per_content_accuracy': [float(a / n) if n else None for a, n in zip(correct, totals)],
+            'groups': result}
+
+
 def hungarian_row_permutation(confusion_counts):
     """Order matched rows by label, then append any unmatched rows."""
     counts = np.asarray(confusion_counts, dtype=np.float64)

@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from vector_quantize_pytorch import VectorQuantize
+from model.normalization import configure_decoder_normalization, configure_backbone_normalization
 
 
 class CSAE(nn.Module):
@@ -30,6 +31,14 @@ class CSAE(nn.Module):
             else 0,
         )
         self.decoder = Decoder(n_channels, W, H, d_emb_c, d_emb_s)
+        # Build the complete original architecture before replacing norms: keep
+        # all shared Conv/Linear/VQ initialization and the RNG stream identical.
+        self.encoder_normalization = config.get('encoder_normalization', 'batch')
+        self.encoder_normalization_layers = configure_backbone_normalization(
+            self.encoder, self.encoder_normalization, scope='encoder')
+        self.decoder_normalization = config.get('decoder_normalization', 'batch')
+        self.decoder_normalization_layers = configure_decoder_normalization(
+            self.decoder, self.decoder_normalization, config.get('decoder_groupnorm_groups', 8))
         self.decoder_style_mode = config.get("decoder_style_mode", "fragment")
         if self.decoder_style_mode not in ("fragment", "page_mean", "page_mean_warmup"):
             raise ValueError(f"Invalid decoder_style_mode: {self.decoder_style_mode}")

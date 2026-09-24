@@ -1,5 +1,7 @@
 import os
 import random
+import json
+from pathlib import Path
 from glob import glob
 
 import numpy as np
@@ -56,6 +58,27 @@ class PhoneNumsDataset(Dataset):
         self.s_list = s_list
 
         self.png_paths = glob(os.path.join(data_dir, f"*.png"))
+        self.manifest_path = None
+        manifest_path = Path(data_dir).resolve().parent / 'manifest.json'
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text())
+            if manifest.get('dataset') == 'PhoneNumsV2':
+                split = Path(data_dir).name
+                entries = [e for e in manifest['entries'] if e['split'] == split]
+                paths = [str(manifest_path.parent/e['path']) for e in entries]
+                if (not entries or len(set(paths)) != len(paths)
+                        or set(paths) != {str(Path(p).resolve()) for p in self.png_paths}):
+                    raise ValueError(f'PhoneNumsV2 manifest/files mismatch: {manifest_path}')
+                for e in entries:
+                    if (Path(e['path']).parts != (split, f"{e['text']}_{e['style']}.png")
+                            or len(e['text']) != 10 or set(e['text']) != set(c_list) or e['style'] not in s_list):
+                        raise ValueError(f'Invalid PhoneNumsV2 entry: {e}')
+                expected = manifest['pages_per_style'][split]
+                if any(sum(e['style'] == s for e in entries) != expected for s in s_list):
+                    raise ValueError('Unbalanced PhoneNumsV2 manifest')
+                if n_fragments != 10 or fragment_len != 32:
+                    raise ValueError('PhoneNumsV2 requires all 10 complete 32px fragments')
+                self.png_paths, self.manifest_path = paths, str(manifest_path)
         if portion != 1:
             random.shuffle(self.png_paths)
             self.png_paths = self.png_paths[: int(len(self.png_paths) * portion)]
@@ -86,7 +109,7 @@ class PhoneNumsDataset(Dataset):
         fragments = []
 
         # randomly pick some fragments (digits)
-        starting_fragment_idx = random.choice(
+        starting_fragment_idx = 0 if self.manifest_path else random.choice(
             range(len(c_labels) - self.n_fragments + 1)
         )
         fragment_indices = []

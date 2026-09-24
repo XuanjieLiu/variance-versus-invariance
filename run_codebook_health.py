@@ -1,4 +1,5 @@
 import argparse
+from pathlib import Path
 import csv
 import datetime
 import json
@@ -16,12 +17,20 @@ from utils.codebook_metrics import (
     compute_alias_geometry_metrics,
     compute_assignment_metrics,
     file_sha256,
+    grouped_mapping_metrics,
 )
 from utils.subset_sampling import SUBSET_STRATEGIES, make_subset_loader
 from model.v3_loss import V3_RATIO_KEYS
 
 
 def select_best_checkpoint(run_dir):
+    metadata_path = Path(run_dir) / "best_validation_loss.json"
+    if metadata_path.is_file():
+        metadata = json.loads(metadata_path.read_text())
+        checkpoint = Path(run_dir) / metadata["checkpoint"]
+        if not checkpoint.is_file():
+            raise FileNotFoundError(checkpoint)
+        return str(checkpoint), int(metadata["epoch"]), float(metadata["validation_total_loss"])
     history_path = os.path.join(run_dir, "loss_epoch_history.csv")
     if not os.path.exists(history_path):
         raise FileNotFoundError(f"Missing epoch loss history: {history_path}")
@@ -133,30 +142,44 @@ def evaluate(
     loader, content_labels, subset_metadata = build_loader(
         config, subset_size, subset_seed, subset_strategy
     )
+    data_module = import_module('dataloader.' + config['dataloader'])
     model = get_model(config["dataloader"], config["model_config"]).to(device)
     checkpoint_state = torch.load(
         checkpoint, map_location=device, weights_only=False
     )
     model.load_state_dict(checkpoint_state["model"])
+    if hasattr(model, "set_decoder_epoch"):
+        model.set_decoder_epoch(checkpoint_state.get("epoch", 0))
     model.eval()
     loss_fn = V3Loss(config["loss_config"])
+    from utils.foreground_color import ForegroundColorAccumulator
+    colors = (ForegroundColorAccumulator(import_module("dataloader." + config["dataloader"]).S_LIST)
+              if config.get("disentanglement_probes", {}).get("foreground_color_metrics") else None)
+    if config.get("dataset_manifest_sha256"):
+        if file_sha256(Path(config["data_dir"]) / "manifest.json") != config["dataset_manifest_sha256"]:
+            raise ValueError("Dataset manifest checksum mismatch")
 
     confusion_counts = torch.zeros(
         (config["model_config"]["n_atoms"], len(content_labels)),
         dtype=torch.int64,
         device=device,
     )
+    per_style_counts = (torch.zeros((len(data_module.S_LIST), *confusion_counts.shape),
+                                   dtype=torch.int64, device=device)
+                        if config.get('per_style_codebook_monitor', {}).get('enabled') else None)
     loss_sums = {}
     v3_ratio_sums = {}
     sample_count = 0
     first_batch = None
 
     with torch.inference_mode():
-        for batch_data, content_idx, _ in loader:
+        for batch_data, content_idx, style_idx in loader:
             batch_data = batch_data.to(device, non_blocking=True)
             if first_batch is None:
                 first_batch = batch_data.detach().clone()
             outputs = model(batch_data, freeze_codebook=True)
+            if colors is not None:
+                colors.update(batch_data, outputs[0], style_idx)
             losses = loss_fn.compute_loss(
                 outputs[0],
                 outputs[1],
@@ -177,6 +200,11 @@ def evaluate(
                 config["model_config"]["n_atoms"],
                 len(content_labels),
             )
+            if per_style_counts is not None:
+                q, y, s = [t.detach().to(device).long().flatten()
+                           for t in (outputs[3], content_idx, style_idx)]
+                flat = (s * confusion_counts.shape[0] + q) * len(content_labels) + y
+                per_style_counts += torch.bincount(flat, minlength=per_style_counts.numel()).reshape_as(per_style_counts)
 
     mean_losses = {name: value / sample_count for name, value in loss_sums.items()}
     mean_v3_ratios = {
@@ -185,6 +213,30 @@ def evaluate(
     codebook = model.vq.codebook.detach().cpu()
     confusion_counts_cpu = confusion_counts.cpu().numpy()
     codebook_metrics = compute_codebook_metrics(confusion_counts_cpu, codebook)
+    grouped = grouped_mapping_metrics(confusion_counts_cpu, getattr(data_module, 'CONTENT_GROUPS', {}))
+    style_report = None
+    if per_style_counts is not None:
+        counts = per_style_counts.cpu().numpy()
+        pairs = counts.sum(1).T
+        if subset_size is None:
+            from utils.confusion_diagnostics import validate_balanced_counts
+            validate_balanced_counts(pairs, confusion_counts_cpu)
+        if not np.array_equal(counts.sum(0), confusion_counts_cpu):
+            raise RuntimeError('Per-style and global counts disagree')
+        mapping = {int(k): v for k, v in grouped['mapping_code_to_label'].items()}
+        style_report = {'content_style_counts': pairs.tolist(),
+                        'counts_style_code_content': counts.tolist(), 'metrics': {}}
+        for name, matrix in zip(data_module.S_LIST, counts):
+            if matrix.sum() == 0:
+                style_report['metrics'][name] = None
+                continue
+            fixed_accuracy = float(sum(matrix[q, c] for q, c in mapping.items()) / matrix.sum())
+            style_report['metrics'][name] = {
+                **compute_assignment_metrics(matrix),
+                'one_to_one_accuracy': fixed_accuracy,
+                'global_mapping_accuracy': fixed_accuracy,
+                'mapping_scope': 'shared global Hungarian; no per-style rematching',
+                'content_group_metrics': grouped_mapping_metrics(matrix, getattr(data_module, 'CONTENT_GROUPS', {}), mapping)}
 
     with torch.inference_mode():
         model.eval()
@@ -201,6 +253,9 @@ def evaluate(
         "losses": mean_losses,
         "v3_ratios": mean_v3_ratios,
         "codebook": codebook_metrics,
+        "content_group_metrics": grouped,
+        **({'per_style_codebook': style_report} if style_report is not None else {}),
+        **({"foreground_color": colors.result()} if colors is not None else {}),
         "fixed_batch": {
             "eval_recon_loss": eval_recon,
             "train_recon_loss": train_recon,

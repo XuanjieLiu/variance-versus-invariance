@@ -1,6 +1,8 @@
 import os
 import random
 import string
+import json
+from pathlib import Path
 from glob import glob
 
 import numpy as np
@@ -57,6 +59,27 @@ class LettersDataset(Dataset):
         self.s_list = s_list
 
         self.png_paths = glob(os.path.join(data_dir, "*.png"))
+        self.manifest_path = None
+        manifest_path = Path(data_dir).resolve().parent / "manifest.json"
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text())
+            if manifest.get("dataset") == "UppercaseLettersV2":
+                split = Path(data_dir).name
+                entries = [e for e in manifest["entries"] if e["split"] == split]
+                declared = [str(manifest_path.parent / e["path"]) for e in entries]
+                if (not declared or len(set(declared)) != len(declared)
+                        or set(declared) != {str(Path(p).resolve()) for p in self.png_paths}):
+                    raise ValueError(f"V2 manifest/files mismatch: {Path(data_dir).resolve()}")
+                for e in entries:
+                    if (Path(e["path"]).parts != (split, f"{e['text']}_{e['style']}.png")
+                            or len(e["text"]) != 26 or set(e["text"]) != set(c_list)
+                            or e["style"] not in s_list):
+                        raise ValueError(f"Invalid V2 manifest entry: {e}")
+                expected = manifest["pages_per_style"][split]
+                if any(sum(e["style"] == s for e in entries) != expected for s in s_list):
+                    raise ValueError(f"Unbalanced V2 manifest: {manifest_path}")
+                self.png_paths = declared
+                self.manifest_path = str(manifest_path)
         if portion != 1:
             random.shuffle(self.png_paths)
             self.png_paths = self.png_paths[: int(len(self.png_paths) * portion)]

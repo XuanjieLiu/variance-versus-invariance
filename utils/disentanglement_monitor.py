@@ -10,6 +10,11 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from utils.foreground_color import ForegroundColorAccumulator, log_color_epoch, save_mask_grid
+from utils.confusion_diagnostics import content_style_counts, validate_balanced_counts, save_confusion_diagnostics
+from utils.codebook_metrics import file_sha256
+from utils.codebook_metrics import grouped_mapping_metrics
+from importlib import import_module
 
 from run_reconstruction_grid import (
     compute_hungarian_mapping, render_grid, write_mapping_csv,
@@ -115,6 +120,11 @@ class DisentanglementMonitor:
         self.n_atoms = n_atoms
         self.contents = list(content_names)
         self.styles = list(dataset.s_list)
+        self.content_groups = getattr(import_module(type(dataset).__module__), 'CONTENT_GROUPS', {})
+        self.color_enabled = config.get("foreground_color_metrics", False)
+        self.confusion_enabled = config.get("balanced_confusion_matrix", False)
+        self.manifest_sha256 = (file_sha256(dataset.manifest_path)
+                                if getattr(dataset, "manifest_path", None) else None)
         self.fit_ids, self.score_ids, self.grid_ids = fixed_page_split(
             dataset, config.get("pages", 512), config.get("seed", 0)
         )
@@ -137,10 +147,17 @@ class DisentanglementMonitor:
         self.epoch, self.global_step, self.mode = epoch, global_step, mode
         self.records, self.grid_records, self.stats = {}, {}, []
         self.offset = 0
+        self.colors = ForegroundColorAccumulator(self.styles) if self.color_enabled else None
+        self.color_result = None
+        self.pair_counts = torch.zeros((len(self.contents), len(self.styles)), dtype=torch.int64)
         every = self.config.get("reconstruction_every_n_epochs", 25)
         self.draw = (epoch + 1) % every == 0 or epoch in self.config.get("extra_grid_epochs", [])
 
     def collect(self, originals, outputs, ec, zs, codes, content, style, stats):
+        if self.colors is not None:
+            self.colors.update(originals, outputs, style)
+        if self.confusion_enabled:
+            self.pair_counts += content_style_counts(content, style, len(self.contents), len(self.styles)).cpu()
         for local in range(len(originals)):
             page_id = self.offset + local
             if page_id in self.probe_ids:
@@ -158,6 +175,10 @@ class DisentanglementMonitor:
 
     @torch.inference_mode()
     def finish(self, confusion_counts, device):
+        if self.confusion_enabled:
+            validate_balanced_counts(self.pair_counts.numpy(), confusion_counts)
+            if self.offset != len(self.dataset):
+                raise RuntimeError("Balanced confusion requires the complete validation split")
         if set(self.records) != self.probe_ids:
             raise RuntimeError("Incomplete validation probe pages; check loader ordering")
         def pack(ids):
@@ -182,6 +203,9 @@ class DisentanglementMonitor:
             metrics.update(values)
         for name in self.stats[0]:
             metrics[name] = float(np.mean([batch[name] for batch in self.stats]))
+        if self.colors is not None:
+            self.color_result = self.colors.result()
+            metrics.update(log_color_epoch(self.root, self.epoch, self.global_step, self.mode, self.color_result))
         row = {"epoch": self.epoch, "completed_epochs": self.epoch + 1,
                "global_step": self.global_step, "decoder_style_mode": self.mode,
                "fit_pages": len(self.fit_ids), "score_pages": len(self.score_ids), **metrics}
@@ -218,7 +242,22 @@ class DisentanglementMonitor:
             "hungarian_accuracy": accuracy, "cells": cells,
             "checkpoint": f"cp_snapshot_epoch{self.epoch}.pt" if periodic else None,
             "grid_pages": [self.dataset.png_paths[i] for i in self.grid_ids],
+            "dataset_manifest_sha256": self.manifest_sha256,
+            "content_group_metrics": grouped_mapping_metrics(counts, self.content_groups, code_to_label),
         }
+        if self.color_result is not None:
+            metadata["foreground_color"] = self.color_result
+            save_mask_grid(directory / f"foreground_mask_epoch{self.epoch:03d}__val.png",
+                           originals, content, self.contents, self.styles)
+        if self.confusion_enabled:
+            prefix = directory / f"codebook_confusion_matrix__epoch{self.epoch:03d}__val-full-balanced-column-normalized__{self.mode}"
+            save_confusion_diagnostics(prefix, counts, self.pair_counts.numpy(), self.contents, self.styles,
+                f"{self.root.name}\nepoch {self.epoch} | val | {self.offset:,} pages",
+                metadata={"epoch": self.epoch, "global_step": self.global_step, "split": "val",
+                          "pages": self.offset, "dataset_manifest_sha256": self.manifest_sha256,
+                          "content_group_metrics": metadata['content_group_metrics']},
+                code_to_label=code_to_label)
+            metadata["balanced_confusion_prefix"] = str(prefix)
         (directory / f"{stem}.json").write_text(json.dumps(metadata, indent=2) + "\n")
 
     def plot(self):

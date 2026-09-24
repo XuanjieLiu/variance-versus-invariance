@@ -5,7 +5,8 @@ from PIL import Image, ImageDraw, ImageFont
 import cv2
 
 
-def random_gradual_blur(image, strips=10):
+def random_gradual_blur(image, strips=10, rng=None, fix_remainder=False):
+    rng = np.random if rng is None else rng
     # Get the height and width of the image
     h, w, _ = image.shape
 
@@ -17,7 +18,7 @@ def random_gradual_blur(image, strips=10):
 
     # Generate random blur levels for each strip, ensuring kernel sizes are odd
     blur_levels = [
-        2 * (np.random.randint(1, np.random.randint(2, 5)) * 2) + 1
+        2 * (rng.randint(1, rng.randint(2, 5)) * 2) + 1
         for _ in range(strips)
     ]
 
@@ -29,14 +30,15 @@ def random_gradual_blur(image, strips=10):
         else:
             end = start + strip_width
 
+        span = end - start if fix_remainder else strip_width
         # Interpolate blur level between this strip and the next
         if i < strips - 1:
-            kernel_size = np.linspace(blur_levels[i], blur_levels[i + 1], strip_width)
+            kernel_size = np.linspace(blur_levels[i], blur_levels[i + 1], span)
         else:
-            kernel_size = np.full(strip_width, blur_levels[i])
+            kernel_size = np.full(span, blur_levels[i])
 
         # Apply variable Gaussian blur to the current strip
-        for j in range(strip_width):
+        for j in range(span):
             col = start + j
             k_size = int(kernel_size[j])  # Ensure the kernel size is an integer
             if k_size % 2 == 0:
@@ -46,6 +48,17 @@ def random_gradual_blur(image, strips=10):
             ).reshape(h, 3)
 
     return blurred_image
+
+
+def add_gaussian_noise(canvas, noise, renderer_version=1):
+    """Version 1 intentionally retains the historical uint8-wrap behavior."""
+    if renderer_version == 2:
+        return np.clip(canvas.astype(np.float64) + noise, 0, 255).astype(np.uint8)
+    if renderer_version != 1:
+        raise ValueError(f"Unknown renderer_version: {renderer_version}")
+    result = canvas.copy()
+    result += np.uint8(noise)
+    return np.clip(result, 0, 255)
 
 
 class Typography:
@@ -77,6 +90,7 @@ class Typography:
         font_size=None,
         fit_to_bbox=False,
         margin=2,
+        rng=None,
     ):
         """
         convert a character to a maybe-binary matrix using the size information and the given font
@@ -84,6 +98,7 @@ class Typography:
 
         ImageDraw.textsize was deprecated, the correct attribute is textlength which gives you the width of the text. for the height use the fontsize * how many rows of text you wrote.
         """
+        rng = np.random if rng is None else rng
         if self.verbose:
             print(f"Converting '{char}' to matrix using font '{font}'")
         w, h = self.patch_width, self.patch_height
@@ -105,14 +120,14 @@ class Typography:
             print(f"Text size: {text_w}x{text_h}")
         # maybe jitter the text color
         if jitter:
-            fg = np.array(fg) + np.random.randint(-2, 3, 3)
+            fg = np.array(fg) + rng.randint(-2, 3, 3)
             fg = tuple(np.clip(fg, 0, 255))
         # draw the text
         if fit_to_bbox:
             shift_x, shift_y = 0, 0
             if translate:
-                shift_x = np.random.uniform(-1, 1)
-                shift_y = np.random.uniform(-1, 1)
+                shift_x = rng.uniform(-1, 1)
+                shift_y = rng.uniform(-1, 1)
             x = (w - text_w) / 2 - left + shift_x
             y = (h - text_h) / 2 - top + shift_y
             x = min(max(x, margin - left), w - margin - right)
@@ -121,8 +136,8 @@ class Typography:
         elif translate:
             draw.text(
                 (
-                    (w - text_w) // 2 + np.random.random(),
-                    (h - text_h) // 2 + np.random.random() - 8,  # a little offset
+                    (w - text_w) // 2 + rng.random(),
+                    (h - text_h) // 2 + rng.random() - 8,  # a little offset
                 ),
                 char,
                 font=fnt,
@@ -146,7 +161,12 @@ class Typography:
         font_size=None,
         fit_to_bbox=False,
         margin=2,
+        rng=None,
+        renderer_version=1,
     ):
+        if renderer_version not in (1, 2):
+            raise ValueError(f"Unknown renderer_version: {renderer_version}")
+        rng = np.random if rng is None else rng
         # create an image
         canvas = np.ones((self.image_height, self.image_width, 3), dtype=np.uint8) * 255
         # if word wrap is not allowed, fill the char list with spaces
@@ -161,8 +181,8 @@ class Typography:
         final_text = "".join(chars)
 
         # maybe change the color a little bit
-        fg = np.array(fg) + np.random.randint(-2, 3, 3)
-        bg = np.array(bg) + np.random.randint(-2, 3, 3)
+        fg = np.array(fg) + rng.randint(-2, 3, 3)
+        bg = np.array(bg) + rng.randint(-2, 3, 3)
         fg = tuple(np.clip(fg, 0, 255))
         bg = tuple(np.clip(bg, 0, 255))
 
@@ -185,6 +205,7 @@ class Typography:
                 font_size=font_size,
                 fit_to_bbox=fit_to_bbox,
                 margin=margin,
+                rng=rng,
             )
             canvas[y : y + self.patch_height, x : x + self.patch_width] = mtx
 
@@ -196,13 +217,11 @@ class Typography:
                 break
         # add distortion
         if "blur" in distortion:  # the blur in every image is changing
-            canvas = random_gradual_blur(canvas)
+            canvas = random_gradual_blur(canvas, rng=rng, fix_remainder=renderer_version == 2)
         # Gaussian noise
         if "gaussian" in distortion:
-            noise = np.random.normal(0, np.random.random() * 10, canvas.shape)
-            # noise = np.clip(noise, -5, 5)
-            canvas += np.uint8(noise)
-            canvas = np.clip(canvas, 0, 255)
+            noise = rng.normal(0, rng.random() * 10, canvas.shape)
+            canvas = add_gaussian_noise(canvas, noise, renderer_version)
 
         if output_path is not None:
             out = Image.fromarray(canvas, mode="RGB")

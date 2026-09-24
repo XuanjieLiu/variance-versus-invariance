@@ -28,6 +28,7 @@ def checkpoint_from_metadata(run_dir, alias):
     metadata_name = {
         "current": "current_checkpoint.json",
         "best": "best_macro_atom_purity.json",
+        "best_val": "best_validation_loss.json",
     }[alias]
     metadata_path = _require_file(
         Path(run_dir) / metadata_name, f"{alias} checkpoint metadata"
@@ -56,10 +57,10 @@ def resolve_evaluation_paths(
 
     if active_checkpoint in (None, "current") and run_dir is not None:
         checkpoint_path = checkpoint_from_metadata(run_dir, "current")
-    elif active_checkpoint == "best":
+    elif active_checkpoint in ("best", "best_val"):
         if run_dir is None:
-            raise ValueError("--active_checkpoint best requires --run.")
-        checkpoint_path = checkpoint_from_metadata(run_dir, "best")
+            raise ValueError(f"--active_checkpoint {active_checkpoint} requires --run.")
+        checkpoint_path = checkpoint_from_metadata(run_dir, active_checkpoint)
     elif active_checkpoint is not None:
         checkpoint_candidate = Path(active_checkpoint).expanduser()
         if run_dir is not None and checkpoint_candidate.parent == Path("."):

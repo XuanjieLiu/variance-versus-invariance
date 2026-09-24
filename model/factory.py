@@ -4,6 +4,7 @@ from model.autoencoder import CSAE
 def get_model(dataloader_name, model_config):
     if (
         "phonenums" in dataloader_name
+        or "hex_digits" in dataloader_name
         or "lowercase_letters" in dataloader_name
         or "uppercase_letters" in dataloader_name
     ):

@@ -9,13 +9,251 @@
 | VVI-RQ2-S1 | RQ2 | RQ2-H2 | completed; not supported |
 | VVI-RQ3-S1 | RQ3 | RQ3-H1, RQ3-H3 | completed; successful |
 | VVI-RQ2-S2 | RQ2 | RQ2-H3 | planned; matched branch pair |
-| VVI-RQ2-S3 | RQ2; RQ1-A control | RQ2-H8; RQ2-H9 | active; CTRL/W100 running, MEAN queued (QOS) |
+| VVI-RQ2-S3 | RQ2; RQ1-A control | RQ2-H8; RQ2-H9 | R1 CTRL/W100 completed/accepted2026-09-11; MEAN cancelled |
+| VVI-RQ2-S5 | RQ2 | RQ2-H9; RQ2-H10 | completed; both fail stable content gate |
+| VVI-RQ2-S6 | RQ2 | RQ2-H11 | timeout at198; last complete197; accepted negative |
+| VVI-PN-S1 | RQ2; paper replication control | RQ2-H12 | completed; REPO partial reproduction, PAPER semantic failure |
+| VVI-RQ2-S7 | RQ2; C512 dimensional control | RQ2-H13; RQ2-H14; RQ2-H6 diagnostic | completed199/accepted; both fail content gate |
+| VVI-RQ2-S8 | RQ2; independent decoder normalization | RQ2-H6; RQ2-H17; H15 historical reference | completed199/accepted2026-09-14; BN transient semantics, GN early collapse |
+| VVI-RQ2-S9 | RQ2; normalization removal | RQ2-H19; RQ2-H20; H6/H18 reference | completed199/accepted2026-09-15; better recon, mixed semantic codes |
+| VVI-HEX-S1 | RQ2; hexadecimal progressive extension | RQ2-H21; RQ2-H22 | completed199/accepted2026-09-16; both semantic gates pass, MEAN earlier/better color |
+| VVI-RQ2-S10 | RQ2; uppercase Hex-protocol replication | RQ2-H23; RQ2-H24; RQ2-H25a | originals completed199/130k; R1 running197821/197822 to769/500500 |
+| VVI-RQ2-S4 | RQ2 | RQ2-H1; RQ2-H7 | cancelled before start; deferred for BN/data diagnosis |
 | VVI-RQ3-S2 | RQ3 | RQ3-H2 | planned; cold-start control |
 | VVI-RQ13-S1 | RQ1-B; RQ3 | RQ1-H5; RQ3-H4 | completed; both VVI gates passed, addition probes failed |
 | VVI-RQ1A-S1 | RQ1-A; RQ2 observation; RQ3 pilot | RQ1-H7; RQ1-H8; RQ1-H9 | completed; seed-0 K26 threshold bracketed in `(64,128]` |
 | VVI-RQ13-S2 | RQ1-A; RQ3 | RQ1-H10; RQ1-H11; RQ3-H6 | completed; C32 failed, C128 transient only |
 | VVI-RQ13-S3 | RQ1-B; RQ3 | RQ1-H12; RQ3-H7 | planned; K52-WARM to K128/D128 generalized expansion |
 | VVI-RQ4-S1 | RQ4 bridge | V5 RQ4-H1; RQ4-H2; RQ4-H3 | transferred to V5; Teacher A gate passed |
+
+## VVI-RQ2-S10 — Hex-Protocol Uppercase Replication
+
+Requested2026-09-16: copy HEX-S1 BN/C512/S512/nativeVQ512/loss/AdamW.001/EMA.98
+protocol onto immutable UppercaseLettersV2,K26/N26. Ordinary fragment versus
+permanent page mean; no release. Default200 natural epochs/130k steps, not500k;
+budget extension is a separate requested user choice, not silently applied.
+Seed0/batch32, max11 checkpoints/current+macro+best-val+25-epoch snapshots,
+uppercase health/acceptance gates unchanged, full2600-page validation/test.
+See [acceptance, comparison and registered protocol](analyses/20260916_HEX_ACCEPTANCE_UPPERCASE.md).
+
+**User-authorized continuation2026-09-17.** Both originals completed199/exit0,
+but current validation macro/Hungarian is only.26572/.21571(fragment) and
+.47832/.39036(MEAN). These are validation monitoring results, not new full-test
+acceptance. Resume each current199, not its macro-best, for570 incremental epochs
+(absolute200..769), giving770×650=500,500 cumulative optimizer updates.
+Run IDs append `-R1`; configs append `_resume1.yaml`. Preserve all model/data/
+loss/EMA/BN/decoder parameters, optimizer moments, scheduler and scaler; no LR
+reset or page resampling. Original epoch-based decay remains: start epoch200
+lr=.001×.98^10≈.000817073; near epoch769 lr≈.0004599, versus Hex's≈.0008179
+at its last epoch199. This tests longer exposure on the existing trajectory,
+not equal LR at equal optimizer step. Old checkpoints lack RNG state: matched
+seeded epoch-boundary resume, not bitwise uninterrupted continuation.
+
+Keep original health/content gates and full2600-page validation. Inherit all
+completed histories plus actual macro-best/best-val weights. Do not replicate
+parent snapshots. R1 retains22 snapshots at224,249,...,749, plus current and two
+best roles (max25 physical checkpoints per run); diagnostic grids remain every25
+completed epochs. Each ws-ia1GPU/32GB/4CPU/24h (partition maximum). If timed out,
+archive that terminal attempt and explicitly resume its latest completed epoch
+to the same cumulative target; never call a timeout a completed770-epoch result.
+At completion full-test macro-best/best-val/current and compare trajectories
+by cumulative step, including stable8/10 windows, per-style accuracy, colors,
+usage and BN sensitivity. No retrospective change of semantic acceptance gates.
+See [continuation and provenance](analyses/20260917_S10_CONTINUATION.md).
+
+## VVI-HEX-S1 — PhoneNums-to-Hex16 Extension
+
+Accepted2026-09-16: both best/current pass semantic gates; MEAN first stable
+window3–12 versus REPO158–167 and better current colors. Six full-test roles
+saved; no continuation. Detailed comparison in the S10 note above.
+
+Two matched scratch200-epoch runs: `VVI-HEX-K16-REPO-S0` and
+`VVI-HEX-K16-REPO-MEAN-S0`. Independent100k-page HexDigitsV2, lowercase0–9/a–f,
+16 fragments/K16, C512/S512/nativeVQ512, original BN and PhoneNums REPO bundle
+(lr.001/wd.1, r15, EMA.98/dead16). Only decoder fragment versus permanent page-mean
+differs; raw z_s still enters V3.500k optimizer steps each; max11 checkpoints.
+Full10k-test gate macro/weighted/Hungarian>=.75, active16/perplexity>=13/coverage>=15,
+recon<=.30; stable8/10 window requires macro/Hungarian>=.70 and the same usage floors.
+Health-gated macro selection remains distinct from acceptance. Color and grouped
+0–9/a–f accuracy reported separately, using the global mapping; no group rematching.
+Each1GPU/32GB/4CPU/24h after full-epoch GPU smoke. See
+[data/protocol/decision details](analyses/20260915_HEX16_PROTOCOL.md).
+
+## VVI-RQ2-S9 — Normalization Removal Isolation
+
+Approved scratch pair: `VVI-RQ2-V2-C512-K26-W50-LR1E4-DNONORM-S0` (encoder BN,
+decoder Identity) and `VVI-RQ2-V2-C512-K26-W50-LR1E4-ALLNONORM-S0` (both Identity).
+C512/S512/nativeVQ512/K26, W50, lr1e-4, seed0/200 epochs, existing corrected V2,
+original initialization/loss/EMA/optimizer unchanged. Preserve fixed input scaling.
+No Fixup, residual rescaling, clipping or GN/LN substitution; all shortcuts included.
+Both add detached sampled optimization scales and shared-mapping per-style full-
+validation usage/purity. Existing aggregate checkpoint gates unchanged; report
+color and worst-style failure separately. Retain current/macro-best/best-val and
+25-epoch snapshots, max11. Each ws-ia/1GPU/32GB/4CPU/12h after GPU smoke.
+See [protocol and decision gate](analyses/20260914_S9_NO_NORMALIZATION.md).
+
+## VVI-RQ2-S8 — Low-LR Decoder Normalization Isolation
+
+Accepted2026-09-14: BN best39 passes the original aggregate gate (test macro.90738,
+1:1.79728) but blue style collapses and colors/persistence fail. GN has no eligible
+macro-best, current test1:1.05652. Both finish199/exit0; no continuation submitted.
+See [full acceptance and proposed branch control](analyses/20260914_S8_ACCEPTANCE.md).
+
+Matched scratch200-epoch C512/S512/nativeVQ512/K26, W50, seed0, corrected V2,
+batch32, float32, AdamW lr1e-4/wd.1 and unchanged exponential scheduler/loss/EMA.
+Both share the existing manifest hash
+`d455680108040b20d4880aff2bba29b4de0878f97cb0d37fd10ca91b8f1dc5b6`.
+Only pair difference: original decoder BN versus GroupNorm8 replacing all
+decoder BN including shortcuts; encoder BN stays unchanged. Run IDs end in
+`W50-LR1E4-BN-S0` / `W50-LR1E4-DGN8-S0`. Configs in
+`configs/uppercase/rq2/v2/normalization/`.
+
+Shared parameter initialization and data order are verified; full model hashes
+differ because GN removes running-stat buffers. No trained-BN checkpoint is
+converted to GN. Normalization config is saved in each run. GN's decoder-only
+BN probe is explicitly a no-op, not evidence of empirical improvement.
+
+Retain S7 diagnostics, early grid epochs and up to11 checkpoints. Normal full-test
+semantic gate and stable8/10 window unchanged; separately compare normal-eval
+recon/color and validation tails. Lower decoder-mode gap alone is not success.
+Each run: ws-ia/1GPU/32GB/4CPU/12h. Pair isolates normalization at low lr; comparing
+BN against historical S7 W50 tests lower lr, not normalization. See the
+[full protocol and decision gate](analyses/20260913_S8_DECODER_NORMALIZATION.md).
+
+## VVI-RQ2-S7 — V2 C512 Decoder-Warmup Replication
+
+Direction RQ2; hypotheses H13 (wide content/nativeVQ on corrected letters), H14
+(50-epoch warmup at C512), H6 (diagnostic normalization-mode sensitivity).
+
+| Run ID | Decoder style | Epochs | Seed |
+|---|---|---:|---:|
+| VVI-RQ2-V2-C512-K26-W0-S0 | fragment throughout |200 (0–199)|0|
+| VVI-RQ2-V2-C512-K26-W50-S0 | page mean0–49; fragment50–199 |200 (0–199)|0|
+
+Configs: `configs/uppercase/rq2/v2/`, suffixes
+`c512_k26_control_seed0.yaml` and `c512_k26_meanwarm50_seed0.yaml`.
+Existing UppercaseLettersV2 manifest SHA256
+`d455680108040b20d4880aff2bba29b4de0878f97cb0d37fd10ca91b8f1dc5b6`;
+no regeneration. C512/S512/K26/nativeVQ512 without a projection, original
+ResNet/BatchNorm, float32, batch32, seed0 and scratch initialization. AdamW
+lr.001/wd.1, original exponential scheduler, relativity15, recon/four V3 weights1,
+commit.1, EMA.98/dead threshold16. These already match C128-W50's bundle; do not
+introduce an additional loss/optimizer change. Shared initial model, sampler and
+fixed diagnostic page hashes are checked in GPU preflight. Cross-task budgets
+differ: letters200 epochs≈130k steps, digits≈500k; one seed is not causal proof.
+
+**New opt-in diagnostics.** Online VQ usage reuses training indices; CSV records
+100-step windows (partial window at each epoch end) and full-epoch aggregate
+active/perplexity/max-code fraction. It describes a changing model, not a fixed
+checkpoint. Every full validation also evaluates32 fixed pages (4/style) in
+normal eval, encoder-only BN batch statistics, decoder-only, and both modes.
+Use the complete normal-validation Hungarian mapping for all four, not a fresh
+subset assignment. Record recon, foreground RGB/chroma, usage, assignment-change
+fraction and fixed-mapping accuracy. VQ stays frozen. Restore all buffers,
+module modes and Python/NumPy/Torch CPU/CUDA RNG in `finally`; no optimizer,
+loss or checkpoint-selection side effects. Only normal full validation ranks
+checkpoints. Keep all existing loss/color/codebook/V3/leakage curves.
+
+**Figures / retention.** Every25 completed epochs plus extra0/10/11/12/15/20/50/100
+produce paired recon/mask and balanced confusion with one full-val mapping.
+Extra figures do not add snapshots. Retain current, health-gated macro-best,
+best-val, and8 snapshots at24/49/74/99/124/149/174/199: at most11 checkpoints.
+Macro selection floors: active>=24, perplexity>=18, coverage>=18, weighted>=.20.
+Best-val is only a reconstruction comparison, not the primary semantic metric.
+
+**Acceptance / decision.** Full2600-page test at macro-best/best-val/current,
+normal eval: macro>=.75, active26, perplexity>=20, coverage>=24, recon<=.30.
+Report weighted purity, Hungarian, colors and BN mode gaps separately. Stable
+window is8/10 epochs meeting macro>=.70, active26, perplexity>=20, coverage>=24.
+Earlier W50 onset plus post-release persistence supports warmup; W0 success with
+W50 failure indicates risk from the early constraint. Continued degradation or
+large BN gaps motivates a separate normalization architecture control next.
+
+**Operations.** Two ws-ia jobs, each1GPU/32GB/4CPU/**12h**; GPU tests and two
+full-validation smoke checks before registering/submitting. Smoke directories
+deleted after visual checks. Do not resume C128-W50 or cancelled old S4 C512.
+See [acceptance and provenance](analyses/20260913_PN_W50_ACCEPTANCE_C512.md).
+
+**S7 outcome, accepted2026-09-13 evening.** Both completed199/exit0. W0 had no
+health-eligible macro candidate in200 epochs; current full-test macro=.39856,
+weighted=.12641, perplexity4.25. W50 restored all26 codes/perplexity24.21 but
+current macro=.37628; macro-best102=.44149. No stable window in either arm.
+Fixed-batch decoder-only BN interventions remove reconstruction spikes without
+changing assignments; encoder-only mode changes do not restore semantics.
+No continuation. [Detailed acceptance and proposed lr-only next pair](analyses/20260913_S7_ACCEPTANCE_NEXT_LR.md).
+The normalization control remains recommended; next hyperparameters are not yet
+a registered/submitted setting.
+
+## VVI-PN-S1 — Correct-color PhoneNums: Paper vs Published Config
+
+Reference: upstream `bbbc7c9c26bda7170612814a407b76633cd22875` and paper AppendixB.2.
+Direction RQ2 / hypothesis RQ2-H12: the successful content/style regime may depend
+on the original task and the training-parameter bundle, not color corruption.
+
+| Run | Optimizer / decay | Four V3 weights | Commit | EMA | Dead threshold |
+|---|---|---:|---:|---:|---:|
+| VVI-PN-K10-PAPER-S0 | Adam /0 | .1 each | .01 | .95 | 3.2 |
+| VVI-PN-K10-REPO-S0 | AdamW /.1 | 1 each | .1 | .98 | 16 |
+
+Shared: corrected PhoneNumsV2,100k pages (80k/10k/10k), each style10k/1250/1250,
+each page all digits once. C512/S512/nativeVQ512/K10, original PhoneNums ResNet,
+BN,10×32×48 RGB fragments, ordinary decoder, r15/recon1, float32, batch32, seed0,
+200 epochs from scratch. Same initialization and sampler hashes. Scheduler:
+upstream exponential decay factor.98/20 epochs, floor.02, no warmup; Adam betas
+.9/.999 and eps1e-8. Configs under `configs/phonenums/v2/`; pin manifest checksum.
+
+Each job requests1GPU/32GB/4CPU/24h. Retain current, best-val, macro-best and8
+25-epoch snapshots (max11). Best-val selects the lowest finite complete-validation
+total loss, ties keep the earlier epoch; it has no label/health gate. Macro-best
+is diagnostic with active>=9, perplexity>=7, coverage>=7 and weighted>=.20.
+Evaluate all three retained roles on full10,000-page test; balanced counts1250
+per(digit,style). Record colors, mapping and the paper-style10×8 codebook/class-mean
+style recombination, alongside10×16 paired reconstruction. Diagnostic labels do
+not enter training. Compare macro with Table8 K10 .892, without equating it to
+Hungarian or claiming statistical reproduction at one seed. Do not run legacy
+quadratic PR retrieval or OOD baselines in this round.
+
+## VVI-RQ2-S6 — Earlier V2 Page-mean Release at Epoch50
+
+RQ2-H11 / `VVI-RQ2-V2-C128-K26-W50-S0`. Copy S5 W100 with the identical dataset,
+seed0, C128/S512/K26, BN, loss/EMA/optimizer/scheduler and health gate. From scratch,
+200 epochs: page-mean0–49, fragment50–199. Extras at0/50/100 plus every25 completed
+epochs; preserve current, macro-best and8 snapshots (max10).1GPU/32GB/4CPU/8h.
+Compare with S5 W100 before release, at49→50 and in the later phase. Keep the
+existing stable-window/content gate and separate color diagnostics. Earlier
+release is an untested intervention, not a demonstrated rescue.
+
+## VVI-RQ2-S4 — Instrumented S3 C512 Reproduction
+
+Requested2026-09-10 after the [S3 posthoc reconstruction check](analyses/20260910_S3_POSTHOC_RECON.md).
+Run ID `VVI-RQ2-C512-K26-CTRL-S0`; config
+`configs/uppercase/rq2/cfg_vvi_rq2_c512_k26_control_seed0.yaml`.
+
+Status update 2026-09-10T17:16:20+04:00: user cancelled pending job183428;
+no GPU allocation, training, or run directory was created. Preserve this protocol
+and config as a deferred proposal; no automatic resubmission.
+
+Preserve original S3 training settings: C512/S512/native K26-D512, seed0,
+**150 epochs (0–149)** from scratch, fragment decoder, original BatchNorm,
+batch32, EMA.98/dead threshold16, AdamW lr.001/weight decay.1, exponential
+scheduler, r15, recon/four V3 weights1, commit.1. The original horizon150 is
+kept rather than silently changing to the C128 experiment's200. No warmup,
+loss curriculum, codebook projection, dataset fix or pretrained initialization.
+
+Engineering-only additions: the same detached leakage probes and full-validation
+statistics as RQ2-S3,25-completed-epoch snapshots and26×16 diagnostic grids,
+plus grids at epoch0,139,140 around the old transition. Preserve original S3's
+unconstrained validation-macro checkpoint ranking (no added health gate); use
+current + macro-best + six permanent snapshots (at most8 files). Apply usage
+health requirements during scientific acceptance, not as a new training change.
+
+Compare against historical S3 and C128 CTRL on their common0–149 horizon.
+Primary question: does high code purity recur, and does color reconstruction
+fail at the same time? Use the same phase-window definition as RQ2-S3, and
+report incomplete windows at the end rather than claiming long-term stability.
+Final acceptance checks full-test best/current purity, usage, reconstruction,
+color grids and cross-label probes. A high-purity brown-output endpoint is not
+successful style recovery. All computation on GPU, ws-ia1GPU/32GB/4CPU/8h.
 
 ## VVI-RQ2-S3 — C128 Style-Bypass Ablation and Warmup
 
@@ -96,6 +334,68 @@ dirty status and tracked diff under its run's `reproducibility/` directory.
 Submitted13:48+04:00: CTRL183134 on ws-l1-001; W100183133 on ws-l1-011;
 MEAN183135 queued with `QOSMaxJobsPerUserLimit` (two running jobs per user).
 Do not cancel unrelated jobs or bypass scheduler policy to force concurrency.
+
+**User-requested pause2026-09-10,15:10:58+04:00.** Cancelled jobs183133/183134/
+183135 to release resources; queued MEAN must not auto-start. All existing model
+files, snapshots, diagnostics and logs are retained. Cancellation is operational,
+not a scientific failure or full-test acceptance. Wait for explicit continuation.
+
+| Arm | Retained resume checkpoint | Next absolute epoch | Remaining epochs to199 |
+|---|---|---:|---:|
+| CTRL | `logs/20260910-1348__VVI-RQ2-C128-K26-CTRL-S0/cp_current_epoch37.pt` | 38 | 162 |
+| MEAN | none; never started | 0 | 200 |
+| W100 | `logs/20260910-1348__VVI-RQ2-C128-K26-W100-S0/cp_current_epoch40.pt` | 41 | 159 |
+
+Resume from current rather than macro-best to preserve latest completed training
+progress. Reload optimizer/scheduler/scaler and keep the W100 switch at absolute
+epoch100. Interrupted partial epochs will be replayed from their start; this is
+not exact mid-batch continuation. File existence/metadata were checked after
+cancellation; future checkpoint loading and all training must run on compute GPU.
+
+**Continuation authorized later2026-09-10.** Submit new R1 runs (keep cancelled
+submissions in ARCHIVE). CTRL uses162 incremental epochs starting38; W100 uses159
+starting41; MEAN uses200 from0 because it never ran. Decoder policy, optimizer,
+scheduler, scaler, objective and checkpoint health gates remain unchanged.
+`inherit_resume_history: true` copies only histories through the resume epoch
+and the actual old macro-best file (W100 epoch39), with provenance in
+`resume_lineage.json`. Old snapshots/grids stay in the parent run. Fixed probe
+fit/score/grid selections must match the parent protocol. Source checkpoints
+lack RNG state, so this is epoch-boundary state recovery, not bitwise continuation
+of the old data order; factor this interruption into causal comparisons.
+
+| New Run ID | Config | Epoch range |
+|---|---|---|
+| VVI-RQ2-C128-K26-CTRL-S0-R1 | `configs/uppercase/rq2/cfg_vvi_rq2_c128_k26_control_seed0_resume1.yaml` | 38–199 |
+| VVI-RQ2-C128-K26-MEAN-S0-R1 | `configs/uppercase/rq2/cfg_vvi_rq2_c128_k26_pagemean_seed0_resume1.yaml` | 0–199 |
+| VVI-RQ2-C128-K26-W100-S0-R1 | `configs/uppercase/rq2/cfg_vvi_rq2_c128_k26_meanwarm100_seed0_resume1.yaml` | 41–199 |
+
+**Accepted 2026-09-11.** Both R1 runs complete epoch199 and pass the registered
+full-test content/reconstruction gate. CTRL best epoch166 has recon `.15130`,
+macro `.91455`, Hungarian `.91178`, active26, perplexity25.81 and coverage26;
+its first stable window is150-159. W100 best epoch197 has recon `.14932`, macro
+`.93249`, Hungarian `.93135`, active26, perplexity25.81 and coverage26; its first
+stable window is76-85 and post-release182-191 is10/10 healthy. Current epoch199
+remains healthy but below best in both arms. W100 supports earlier semantic
+catalysis and persistence at seed0. Both reconstruction series lose source
+colors, so neither passes the qualitative style-reconstruction requirement.
+
+Continuation preflight passed on ws-l1-002:45 unit tests and real-checkpoint
+two-batch smoke epochs38/41 plus C512 scratch epoch0. Model state, learning rate,
+optimizer/scheduler/scaler, inherited best39, completed-only histories and fixed
+probe protocol verified. Temporary smoke artifacts were deleted (~1.6GiB).
+
+Submission state at16:35+04:00: CTRL-R1 job183426 running on ws-l1-002;
+W100-R1 job183427 running on ws-l1-011; C512 job183428 and MEAN-R1 job183429 queued.
+
+**Latest user update,2026-09-10T17:16:20+04:00.** Cancelled pending jobs183428/
+183429 with a PENDING-only filter. Slurm confirmed CANCELLED, runtime0 and no
+resource allocation; neither run directory exists. CTRL183426/W100183427 remain
+RUNNING and unchanged, with the original epoch199 endpoint and W100 epoch100
+switch. Cancelled attempts are archived, not scientific negatives; the permanent
+MEAN comparison is still unavailable. After these two finish and are accepted,
+prioritize BN-state isolation and a versioned correction of Gaussian-noise
+uint8 overflow. Do not modify the live runs' model, config, or PNG data, and do
+not submit further formal experiments automatically.
 
 ## VVI-RQ4-S1 - AGUSA dependency bridge
 
@@ -472,6 +772,56 @@ was the only epoch above .75; epoch199 fell to macro=.450. Its full-test alias
 margin=.766 also missed the .80 gate. Thus 128D is sufficient for a transient
 redundant semantic state, while flat K128 scratch optimization cannot maintain
 it. Neither run should be continued from current.
+
+## VVI-RQ2-S5 — V2 Data-Correction Replication
+
+**Direction / hypotheses.** RQ2 / RQ2-H9 (warmup catalysis), RQ2-H10 (data-version
+effect on color and validation stability). Starts from scratch, not resume.
+
+| Run ID | Decoder style | Epochs | Seed |
+|---|---|---:|---:|
+| VVI-RQ2-V2-C128-K26-CTRL-S0 | original fragment style throughout | 200 (0–199) | 0 |
+| VVI-RQ2-V2-C128-K26-W100-S0 | page mean0–99, original from100 | 200 (0–199) | 0 |
+
+Configs live in `configs/uppercase/rq2/v2/`. C128/S512/K26/nativeVQ128, original
+BatchNorm, batch32, float32, EMA decay.98/dead threshold16, relativity15,
+recon/content/style/sample/fragment weights1, commit.1, AdamW lr.001/weight decay.1,
+and the complete existing scheduler match S3 CTRL/W100. Initial model state and
+manifest are hashed; identical seed and manifest order give matched shuffles.
+
+**Data.** Separate UppercaseLettersV2: 26,000 RGB pages,26 unique letters/page;
+per style train2600/val325/test325. Generation/split seeds0; signed float noise
+then clip/cast and complete last blur strip. Manifest pins every PNG, source/font
+hash and dependencies. SHA256:
+`d455680108040b20d4880aff2bba29b4de0878f97cb0d37fd10ca91b8f1dc5b6`.
+Old PNGs and legacy rendering stay unchanged. This comparison is data-version
+replication, not isolation of one fix. No clean references or true masks.
+
+**Diagnostics.** Every full validation reuses its existing forwards for foreground
+RGB MAE and RGB-chroma RMSE, valid/invalid fragment counts, mask fraction and
+prediction-out-of-range fraction, overall and all8 styles. No prediction clipping.
+Input-only masks: channel median on outer2px, interior max-channel delta>.15,
+valid if at least16 pixels; invalid-only groups produce NaN, not zero. Report
+mask/noise limitations. Retain existing detached leakage/raw-MPD probes.
+
+Every25 completed epochs plus epoch0/100, save paired recon/mask and balanced
+confusion SVG/PNG/CSV/JSON. Full val/test counts are325 per(letter,style), verified
+from actual batches. Hungarian on raw counts, rows=real code IDs, columns=A–Z,
+P(code|content); rate comes from raw counts. Display all values to2 decimals using
+column-conserving rounding; unrounded data retained. No extra training forward.
+
+**Retention / gates.** Current + health-gated macro-best +8 periodic snapshots
+(epoch24/49/74/99/124/149/174/199), at most10 checkpoints. The unchanged best floor
+is active>=24, perplexity>=18, coverage>=18, weighted purity>=.20. Content success:
+full-test macro/weighted>=.75, active26, perplexity>=20, coverage>=24, recon<=.30,
+eval/train recon<=2. Stable onset: at least8/10 consecutive validation epochs with
+macro>=.70, active26, perplexity>=20, coverage>=24. Color is reported separately,
+without an uncalibrated hard threshold. Evaluate both macro-best and current on
+full test, including colors/confusion/reconstruction. Continued val spikes with
+smooth train on V2 motivate an independent BN comparison, not another data change.
+
+**Operations.** Two ws-ia jobs, each1GPU/32GB/4CPU/8h after GPU preflight. Do not
+restart cancelled permanent-MEAN or C512. [Preparation note](analyses/20260911_V2_REPLICATION.md).
 
 ## VVI-RQ13-S3 — Warm K52 to K128 with a 128D VQ Interface
 

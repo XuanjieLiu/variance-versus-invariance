@@ -18,7 +18,7 @@ if __name__ == "__main__":
         "--active_checkpoint",
         type=str,
         default=None,
-        help="Checkpoint path/name, or current/best when --run is given.",
+        help="Checkpoint path/name, or current/best/best_val when --run is given.",
     )
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--pr_metrics", action="store_true")

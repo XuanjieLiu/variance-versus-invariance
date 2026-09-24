@@ -7,6 +7,8 @@ import os
 import sys
 import datetime
 import json
+import hashlib
+import shutil
 import logging
 import yaml
 from importlib import import_module
@@ -31,10 +33,15 @@ from utils.checkpoint_transform import (
     pca_project_and_expand_ema_codebook_state,
 )
 from utils.loss_logging import LossLogger
+from utils.resume_artifacts import inherit_resume_artifacts
 from utils.disentanglement_monitor import DisentanglementMonitor
 from utils.objective_schedule import apply_loss_schedules
 from utils.objective_schedule_logging import ObjectiveScheduleLogger
 from utils.v3_ratio_logging import V3RatioLogger
+from utils.training_diagnostics import TrainingUsageMonitor, BatchNormDiagnostic
+from utils.normfree_diagnostics import (
+    OptimizationScaleMonitor, PerStyleCodebookMonitor, non_normalization_parameters,
+)
 from model.factory import get_model
 from model.v3_loss import V3_RATIO_KEYS
 
@@ -118,8 +125,16 @@ class Trainer:
         self.best_macro_epoch = None
         self.best_macro_stage = None
         self.best_macro_checkpoint_path = None
+        self.best_validation_loss = None
+        self.best_validation_epoch = None
         self.seed_resumed_macro_checkpoint = False
         self.checkpoint_transform_metadata = None
+        self.training_usage_monitor = None
+        usage_config = config.get("training_usage_monitor", {})
+        if usage_config.get("enabled", False):
+            self.training_usage_monitor = TrainingUsageMonitor(
+                self.log_dir, config["model_config"]["n_atoms"],
+                usage_config.get("every_n_steps", 100))
 
     def prepare_data(self):
         """
@@ -132,6 +147,19 @@ class Trainer:
         self.C_LIST = dataloader_module.C_LIST
 
         self.data_dir = config["data_dir"]
+        if config.get("dataset_manifest_sha256"):
+            manifest_path = os.path.abspath(os.path.join(self.data_dir, "manifest.json"))
+            actual_hash = file_sha256(manifest_path)
+            if actual_hash != config["dataset_manifest_sha256"]:
+                raise ValueError(f"Dataset manifest checksum mismatch: {manifest_path}")
+            with open(manifest_path) as handle:
+                manifest = json.load(handle)
+            self._write_json_atomic(os.path.join(self.log_dir, "dataset_provenance.json"),
+                {"manifest": manifest_path, "manifest_sha256": actual_hash,
+                 "dataset": manifest.get("dataset"), "generation_seed": manifest.get("generation_seed"),
+                 "split_seed": manifest.get("split_seed"), "generator_sha256": manifest.get("generator_sha256"),
+                 "page_count": manifest.get("page_count")})
+            logging.info("Dataset manifest SHA256: %s", actual_hash)
         self.train_loader = dataloader_module.get_dataloader(
             os.path.join(self.data_dir, "train"),
             portion=self.portion,
@@ -152,6 +180,10 @@ class Trainer:
             shuffle=False,
         )
         logging.info("Validation dataloader ready.")
+        self.bn_diagnostic = None
+        if config.get("bn_diagnostic", {}).get("enabled", False):
+            self.bn_diagnostic = BatchNormDiagnostic(
+                self.log_dir, self.val_loader.dataset, config["bn_diagnostic"])
         self.disentanglement_monitor = None
         if config.get("disentanglement_probes", {}).get("enabled", False):
             if not config["loss_config"].get("monitor_raw_mpd", False):
@@ -160,6 +192,11 @@ class Trainer:
                 self.log_dir, self.val_loader.dataset,
                 config["disentanglement_probes"], config["model_config"]["n_atoms"], self.C_LIST,
             )
+        self.per_style_codebook_monitor = None
+        if config.get('per_style_codebook_monitor', {}).get('enabled', False):
+            self.per_style_codebook_monitor = PerStyleCodebookMonitor(
+                self.log_dir, config['model_config']['n_atoms'], self.C_LIST, self.S_LIST,
+                getattr(dataloader_module, 'CONTENT_GROUPS', None))
 
     def build_model(self):
         """
@@ -185,17 +222,56 @@ class Trainer:
             logging.info("VQ project_in/project_out parameters are frozen.")
         logging.info("Model set up.")
         logging.info(self.model.get_model_size())
+        if 'decoder_normalization' in model_config or 'encoder_normalization' in model_config:
+            normalization = {
+                'encoder': self.model.encoder_normalization,
+                'encoder_converted_layers': self.model.encoder_normalization_layers,
+                'decoder': self.model.decoder_normalization,
+                'converted_layers': self.model.decoder_normalization_layers,
+                'encoder_bn_layers': sum(isinstance(m, torch.nn.modules.batchnorm._BatchNorm)
+                                         for m in self.model.encoder.modules()),
+                'decoder_bn_layers': sum(isinstance(m, torch.nn.modules.batchnorm._BatchNorm)
+                                         for m in self.model.decoder.modules()),
+                'decoder_groupnorm_layers': sum(isinstance(m, torch.nn.GroupNorm)
+                                                for m in self.model.decoder.modules()),
+                'scope': 'explicit backbone choices before checkpoint load; defaults preserve historical BN',
+            }
+            self._write_json_atomic(os.path.join(self.log_dir, 'normalization_config.json'), normalization)
+            logging.info('Normalization configuration: %s', normalization)
+        if config.get("record_initial_model_hash", False) and not config.get("load_checkpoint"):
+            digest = hashlib.sha256()
+            for name, tensor in sorted(self.model.state_dict().items()):
+                digest.update(f"{name}|{tensor.dtype}|{tuple(tensor.shape)}".encode())
+                digest.update(tensor.detach().contiguous().cpu().numpy().tobytes())
+            parameter_digest = hashlib.sha256()
+            for name, tensor in sorted(self.model.named_parameters()):
+                parameter_digest.update(f"{name}|{tensor.dtype}|{tuple(tensor.shape)}".encode())
+                parameter_digest.update(tensor.detach().contiguous().cpu().numpy().tobytes())
+            non_norm_digest = hashlib.sha256()
+            for name, tensor in sorted(non_normalization_parameters(self.model)):
+                non_norm_digest.update(f"{name}|{tensor.dtype}|{tuple(tensor.shape)}".encode())
+                non_norm_digest.update(tensor.detach().contiguous().cpu().numpy().tobytes())
+            self._write_json_atomic(os.path.join(self.log_dir, "initial_model_state.json"),
+                {"sha256": digest.hexdigest(), "seed": config["random_seed"],
+                 "scope": "all parameters and buffers before any forward",
+                 "parameters_sha256": parameter_digest.hexdigest(),
+                 "non_normalization_parameters_sha256": non_norm_digest.hexdigest(),
+                 "non_normalization_scope": "shared Conv/Linear/VQ parameters, excludes normalization affine parameters",
+                 "parameter_scope": "all named parameters; excludes BN running buffers"})
+            logging.info("Initial model state SHA256: %s", digest.hexdigest())
 
         # precision
         self.scaler = GradScaler()
 
         # optimizer
-        if optimizer_config["optimizer"] == "AdamW":
-            self.optimizer = optim.AdamW(
+        if optimizer_config["optimizer"] in ("Adam", "AdamW"):
+            optimizer_class = optim.Adam if optimizer_config["optimizer"] == "Adam" else optim.AdamW
+            self.optimizer = optimizer_class(
                 self.model.parameters(),
                 lr=optimizer_config["lr"],
                 betas=(optimizer_config["beta1"], optimizer_config["beta2"]),
                 weight_decay=optimizer_config["weight_decay"],
+                eps=optimizer_config.get("eps", 1e-8),
             )
         elif optimizer_config["optimizer"] == "SGD":
             self.optimizer = optim.SGD(
@@ -276,6 +352,8 @@ class Trainer:
                         "Reset macro-best state after checkpoint transform."
                     )
                 else:
+                    if config.get("save_best_validation_loss", False):
+                        self._restore_best_validation_state(checkpoint_state, cp_path)
                     self.best_macro_atom_purity = checkpoint_state.get(
                         "best_macro_atom_purity"
                     )
@@ -308,9 +386,7 @@ class Trainer:
                         self.best_macro_epoch,
                     )
             else:
-                logging.info(
-                    f"No checkpoint found at {cp_path}. Will start from scratch."
-                )
+                raise FileNotFoundError(f"Requested resume checkpoint is missing: {cp_path}")
 
         # scheduler.
         if optimizer_config["scheduler"] == "cosine_annealing":
@@ -350,6 +426,13 @@ class Trainer:
                 "Legacy checkpoint has no scheduler state; reconstructed it from epoch."
             )
         logging.info(f"Scheduler {optimizer_config['scheduler']} set up.")
+        if config.get("inherit_resume_history", False):
+            if checkpoint_state is None or self.reset_training_state or config.get("checkpoint_transform"):
+                raise ValueError("inherit_resume_history requires an untransformed resume checkpoint")
+            self.best_macro_checkpoint_path = inherit_resume_artifacts(
+                config["load_checkpoint"], self.log_dir, checkpoint_state
+            )
+            logging.info("Inherited completed histories and retained macro-best into new run.")
         if self.seed_resumed_macro_checkpoint:
             self._persist_best_macro_checkpoint(self.best_macro_epoch)
             logging.info(
@@ -359,6 +442,10 @@ class Trainer:
                 self.best_macro_atom_purity,
                 self.best_macro_val_loss,
             )
+        self.optimization_scale_monitor = None
+        if config.get('optimization_diagnostics', {}).get('enabled', False):
+            self.optimization_scale_monitor = OptimizationScaleMonitor(
+                self.log_dir, self.model, config['optimization_diagnostics'].get('every_n_steps', 100))
         if self.checkpoint_transform_metadata is not None:
             self._write_json_atomic(
                 os.path.join(self.log_dir, "initialization.json"),
@@ -482,6 +569,12 @@ class Trainer:
                     )
             # training loop
             self.model.train()
+            usage_monitor = self.training_usage_monitor
+            scale_monitor = getattr(self, 'optimization_scale_monitor', None)
+            if scale_monitor is not None:
+                scale_monitor.begin(epoch)
+            if usage_monitor is not None:
+                usage_monitor.begin(epoch, self.device)
             running_losses_train = {}
             running_count_train = 0
             epoch_losses_train = {}
@@ -490,6 +583,8 @@ class Trainer:
             for i, (batch_data, c_labels, s_labels) in enumerate(self.train_loader):
                 # Move data to device
                 batch_data = batch_data.to(device=self.device)
+                if scale_monitor is not None:
+                    scale_monitor.before_forward(global_step + 1, i == len(self.train_loader) - 1)
 
                 with torch.autocast(self.device.type, dtype=self.dtype):
                     # forward
@@ -523,6 +618,14 @@ class Trainer:
                 self.scaler.update()
 
                 global_step += 1
+                if scale_monitor is not None:
+                    scale_row = scale_monitor.collect(global_step, emb_c, emb_c_vq, emb_s)
+                    if scale_row is not None:
+                        logging.info('OPTIMIZATION SCALES - %s', scale_row)
+                        if config['wandb']:
+                            self._write_summary(global_step, epoch, scale_row, 'train_scales')
+                if usage_monitor is not None:
+                    usage_monitor.collect(vq_indices, global_step)
                 # accumulate running loss
                 for k, v in losses.items():
                     if k not in running_losses_train:
@@ -569,6 +672,13 @@ class Trainer:
             mean_epoch_losses_train = LossLogger.mean(
                 epoch_losses_train, epoch_count_train
             )
+            if usage_monitor is not None:
+                usage_row = usage_monitor.finish(global_step)
+                logging.info("ONLINE TRAINING USAGE - %s", usage_row)
+                if config["wandb"]:
+                    self._write_summary(global_step, epoch, usage_row, "train_online_usage")
+            if scale_monitor is not None:
+                scale_monitor.finish(global_step)
             self.loss_logger.log_epoch(
                 "train",
                 epoch,
@@ -705,6 +815,10 @@ class Trainer:
             # learning rate and scheduler state for the next epoch.
             self.scheduler.step()
 
+            best_val_changed = False
+            if codebook_metrics_val is not None and config.get("save_best_validation_loss", False):
+                best_val_changed = self._consider_best_validation_loss(epoch, running_losses_val["total_loss"])
+
             if (
                 codebook_metrics_val is not None
                 and config.get("save_best_macro_atom_purity", False)
@@ -715,6 +829,9 @@ class Trainer:
                     codebook_metrics_val["macro_atom_purity"],
                     metrics=codebook_metrics_val,
                 )
+
+            if best_val_changed:
+                self._persist_best_validation_checkpoint(epoch)
 
             # Keep exactly one current checkpoint; macro-best is maintained
             # independently above.
@@ -759,12 +876,20 @@ class Trainer:
         )
         sample_count = 0
         monitor = getattr(self, "disentanglement_monitor", None) if epoch is not None else None
+        bn_diagnostic = getattr(self, "bn_diagnostic", None) if epoch is not None else None
+        style_monitor = getattr(self, 'per_style_codebook_monitor', None) if epoch is not None else None
+        if style_monitor is not None:
+            style_monitor.begin(epoch, global_step, self.device)
+        if bn_diagnostic is not None:
+            bn_diagnostic.begin(epoch, global_step)
         if monitor is not None:
             monitor.begin(epoch, global_step, self.model.active_decoder_style_mode)
         self.model.eval()
         with torch.inference_mode():
             for batch_data, c_labels, s_labels in self.val_loader:
                 batch_data = batch_data.to(device=self.device, non_blocking=True)
+                if bn_diagnostic is not None:
+                    bn_diagnostic.collect(batch_data, c_labels, s_labels)
                 sample_count += int(batch_data.shape[0])
                 (
                     outputs,
@@ -775,6 +900,8 @@ class Trainer:
                     emb_s,
                     *rest,
                 ) = self.model(batch_data, freeze_codebook=True)
+                if style_monitor is not None:
+                    style_monitor.collect(vq_indices, c_labels, s_labels)
                 loss_outputs = self.loss.compute_loss(
                     outputs,
                     emb_c,
@@ -806,6 +933,20 @@ class Trainer:
             name: value / batch_count for name, value in running_v3_ratios.items()
         }
         confusion_counts_cpu = confusion_counts.cpu().numpy()
+        if style_monitor is not None:
+            for row in style_monitor.finish(confusion_counts_cpu):
+                logging.info('VALIDATION PER-STYLE CODEBOOK - %s', row)
+                if config['wandb']:
+                    self._write_summary(global_step, epoch, row, f"val_style_{row['style']}")
+            for row in style_monitor.group_rows:
+                logging.info('VALIDATION CONTENT GROUP - %s', row)
+                if config['wandb']:
+                    self._write_summary(global_step, epoch, row, f"val_content_{row['group']}")
+        if bn_diagnostic is not None:
+            for row in bn_diagnostic.finish(self.model, confusion_counts_cpu):
+                logging.info("VALIDATION BN DIAGNOSTIC - %s", row)
+                if config["wandb"]:
+                    self._write_summary(global_step, epoch, row, f"val_bn_{row['mode']}")
         if monitor is not None:
             probe_metrics = monitor.finish(confusion_counts_cpu, self.device)
             logging.info("VALIDATION PROBES - Epoch %s | %s", epoch, probe_metrics)
@@ -856,7 +997,51 @@ class Trainer:
             "best_macro_val_loss": self.best_macro_val_loss,
             "best_macro_epoch": self.best_macro_epoch,
             "best_macro_stage": getattr(self, "best_macro_stage", None),
+            "best_validation_loss": getattr(self, "best_validation_loss", None),
+            "best_validation_epoch": getattr(self, "best_validation_epoch", None),
         }
+
+    def _consider_best_validation_loss(self, epoch, val_loss):
+        value = float(val_loss)
+        previous = getattr(self, "best_validation_loss", None)
+        if not np.isfinite(value) or (previous is not None and value >= previous):
+            return False
+        self.best_validation_loss, self.best_validation_epoch = value, int(epoch)
+        return True
+
+    def _best_validation_metadata(self):
+        return {"epoch": self.best_validation_epoch, "validation_total_loss": self.best_validation_loss,
+                "checkpoint": f"cp_best_validation_loss_epoch{self.best_validation_epoch}.pt"}
+
+    def _persist_best_validation_checkpoint(self, epoch):
+        metadata = self._best_validation_metadata()
+        path = os.path.join(self.log_dir, metadata["checkpoint"])
+        torch.save(self._checkpoint_state(epoch), path + ".tmp")
+        os.replace(path + ".tmp", path)
+        self._write_json_atomic(os.path.join(self.log_dir, "best_validation_loss.json"), metadata)
+        for old in glob(os.path.join(self.log_dir, "cp_best_validation_loss_epoch*.pt")):
+            if os.path.abspath(old) != os.path.abspath(path):
+                os.remove(old)
+        logging.info("Best validation-loss checkpoint saved at %s (loss=%.6g)", path, self.best_validation_loss)
+
+    def _restore_best_validation_state(self, state, source_checkpoint):
+        self.best_validation_loss = state.get("best_validation_loss")
+        self.best_validation_epoch = state.get("best_validation_epoch")
+        if self.best_validation_loss is None:
+            self.best_validation_epoch = None
+            return
+        if not np.isfinite(self.best_validation_loss) or self.best_validation_epoch is None:
+            raise ValueError("Invalid best-validation state in resume checkpoint")
+        metadata = self._best_validation_metadata()
+        source = os.path.join(os.path.dirname(os.path.abspath(source_checkpoint)), metadata["checkpoint"])
+        target = os.path.abspath(os.path.join(self.log_dir, metadata["checkpoint"]))
+        if not os.path.isfile(source):
+            raise FileNotFoundError(f"Cannot restore retained best-validation weights: {source}")
+        if source != target:
+            if os.path.exists(target) and file_sha256(target) != file_sha256(source):
+                raise FileExistsError(f"Refusing to replace different retained best-validation weights: {target}")
+            shutil.copy2(source, target)
+        self._write_json_atomic(os.path.join(self.log_dir, "best_validation_loss.json"), metadata)
 
     @staticmethod
     def _write_json_atomic(path, payload):
