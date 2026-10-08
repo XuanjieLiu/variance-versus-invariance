@@ -33,9 +33,9 @@ These instructions apply to every agent working in this repository.
 - New runs use the `current_and_best_macro` policy: retain exactly the latest
   current checkpoint and the best validation macro-atom-purity checkpoint.
 - Explicitly registered periodic snapshots are an exception: user-requested
-  VVI-RQ2-S3/S4/S5/S6/S7/S8/S9/S10, VVI-PN-S1 and VVI-HEX-S1 runs keep `cp_snapshot_epoch*.pt` every 25 completed epochs in
+  VVI-RQ2-S3/S4/S5/S6/S7/S8/S9/S10, VVI-PN-S1, VVI-HEX-S1 and VVI-HEX-RANK-S1 runs keep `cp_snapshot_epoch*.pt` every 25 completed epochs in
   addition to current/best. Never prune these with current/best rotation.
-- VVI-PN-S1, VVI-HEX-S1 and VVI-RQ2-S7/S8/S9/S10 additionally retain one best-validation-loss checkpoint:
+- VVI-PN-S1, VVI-HEX-S1, VVI-HEX-RANK-S1 and VVI-RQ2-S7/S8/S9/S10 additionally retain one best-validation-loss checkpoint:
   at most 11 files at 200 epochs; the historical S6 C128 W50 remains at most10.
   S10 R1 is the user-authorized 570-epoch continuation (absolute200..769):
   retain22 new25-epoch snapshots plus current/macro-best/best-val, at most25
@@ -77,6 +77,10 @@ These instructions apply to every agent working in this repository.
   or native-VQ dimension reduction is authorized in this setting.
 - V2 CTRL/W100 retain the original BatchNorm and training objective. Do not add
   a simultaneous normalization or optimizer intervention.
+- VVI-HEX-RANK-S1 is the 2026-10-08 user-authorized v3_rank pair on the original
+  Hex16 permanent-MEAN protocol: target_rank4 versus2, weight.01, otherwise
+  unchanged seed0/C512/S512/K16/BN/EMA/200epoch settings. Here rank target is NOT
+  n_atoms. Preserve labels as diagnostics only; no addition training or dim change.
 - S10 reuses immutable UppercaseLettersV2 and the HEX-S1 optimizer/objective/BN
   bundle, comparing ordinary fragment versus permanent page-mean decoding.
   Registered default budget is200 natural epochs/130k steps, not Hex's500k;

@@ -21,6 +21,7 @@ from utils.codebook_metrics import (
 )
 from utils.subset_sampling import SUBSET_STRATEGIES, make_subset_loader
 from model.v3_loss import V3_RATIO_KEYS
+from model.rank_regularization import v3_method_specs
 
 
 def select_best_checkpoint(run_dir):
@@ -135,6 +136,7 @@ def evaluate(
     subset_seed=0,
     subset_strategy="random",
 ):
+    v3_method_specs(config)  # Validate the explicit v3_rank alias, if selected.
     if not torch.cuda.is_available():
         raise RuntimeError("Codebook health evaluation requires a GPU allocation.")
     device = torch.device("cuda")
@@ -151,7 +153,7 @@ def evaluate(
     if hasattr(model, "set_decoder_epoch"):
         model.set_decoder_epoch(checkpoint_state.get("epoch", 0))
     model.eval()
-    loss_fn = V3Loss(config["loss_config"])
+    loss_fn = V3Loss(config["loss_config"], model_config=config["model_config"])
     from utils.foreground_color import ForegroundColorAccumulator
     colors = (ForegroundColorAccumulator(import_module("dataloader." + config["dataloader"]).S_LIST)
               if config.get("disentanglement_probes", {}).get("foreground_color_metrics") else None)
@@ -177,7 +179,8 @@ def evaluate(
             batch_data = batch_data.to(device, non_blocking=True)
             if first_batch is None:
                 first_batch = batch_data.detach().clone()
-            outputs = model(batch_data, freeze_codebook=True)
+            outputs = model(batch_data, freeze_codebook=True,
+                            **({"return_native": True} if loss_fn.rank_enabled else {}))
             if colors is not None:
                 colors.update(batch_data, outputs[0], style_idx)
             losses = loss_fn.compute_loss(
@@ -187,6 +190,7 @@ def evaluate(
                 outputs[4],
                 outputs[5],
                 batch_data,
+                native_vq=outputs[6] if loss_fn.rank_enabled else None,
             )
             batch_size = batch_data.shape[0]
             sample_count += batch_size

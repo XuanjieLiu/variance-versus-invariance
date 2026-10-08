@@ -3,6 +3,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from model.rank_regularization import RankRegularization
 
 
 V3_RATIO_KEYS = (
@@ -37,18 +38,44 @@ def mpd(x):
 
 
 class V3Loss:
-    def __init__(self, config):
+    def __init__(self, config, model_config=None):
         """
         config: a dict of loss config. Must contain key "weights".
         """
         super(V3Loss, self).__init__()
         self.config = config
         self.eps = 1e-5
+        self.rank_regularization = RankRegularization(config.get("rank_regularization"))
+        self.rank_enabled = self.rank_regularization.enabled
+        if any(name.startswith("rank_") or name == "weighted_rank_loss" for name in config["weights"]):
+            raise ValueError("Set the rank weight only in loss_config.rank_regularization.weight")
+        if model_config is not None and self.rank_enabled:
+            self.rank_regularization.validate_dimensions(
+                model_config["n_fragments"],
+                model_config.get("vq_codebook_dim") or model_config["d_emb_c"],
+                model_config["n_atoms"],
+            )
 
         if "supersample_content" in config or "widen_style" in config:
-            self.compute_loss = self._compute_loss_adapted
+            self._base_compute_loss = self._compute_loss_adapted
         else:
-            self.compute_loss = self._compute_loss_pure
+            self._base_compute_loss = self._compute_loss_pure
+
+    def compute_loss(self, x_hat, z_c, z_c_vq, commit_loss, z_s, x, *, native_vq=None):
+        losses = self._base_compute_loss(x_hat, z_c, z_c_vq, commit_loss, z_s, x)
+        if self.rank_enabled:
+            if native_vq is not None and native_vq.shape[:2] != z_c.shape[:2]:
+                raise ValueError("native_vq must preserve the original page/fragment axes")
+            rank = self.rank_regularization(native_vq)
+            losses.update(rank)
+            # Exactly once, outside the historical V3 weights loop. v3_loss and
+            # its four components keep their original meanings.
+            losses["total_loss"] = losses["total_loss"] + rank["weighted_rank_loss"]
+            if not all(torch.isfinite(value).all() for value in rank.values()):
+                raise ValueError("Nonfinite V3-Rank statistics")
+            if not torch.isfinite(losses["total_loss"]).all():
+                raise ValueError("Nonfinite V3-Rank total loss")
+        return losses
 
     def _compute_loss_pure(
         self,

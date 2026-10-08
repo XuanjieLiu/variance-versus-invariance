@@ -66,6 +66,7 @@ target learnable.
 | RQ1-H10 | C128 can retain a high-purity semantic phase when K grows from 26 to 128 from scratch. | partial, not stably supported | epoch195 full macro=.771/weighted=.768, but it is the only epoch>=.75 and current falls to .450 |
 | RQ1-H11 | K128 redundancy can lower the native content-width threshold enough to rescue C32. | not supported | best full macro=.423 despite active=128/perplexity=121.33 |
 | RQ1-H12 | A wide encoder with `vq_codebook_dim=128` can preserve a compact discrete interface and high purity through warm K52→K128 expansion. | planned | VVI-RQ13-S3; directly matches the downstream requirement |
+| RQ1-H13 | A native-VQ effective-rank floor of 2–4 can prevent near-collinearity without degrading content purity or addition usability. | implementation verified; running222839/222840 from2026-10-08 | [v3_rank](../../manuals/v3_rank.md), VVI-HEX-RANK-S1: matched Hex16 permanent-MEAN rank4/rank2, weight.01. Geometry alone is not semantic success. |
 
 ## Tried, rejected, and backlog
 
@@ -87,6 +88,12 @@ target learnable.
   multi-seed boundary replication.
 
 ## Next decision gate
+
+Latest user decision2026-10-08: run `v3_rank` on the successful Hex16 permanent
+MEAN protocol, comparing target4/2 with nativeD512 and K16 unchanged. This is a
+rank-regularization mechanism test, not yet a native-width reduction or an
+addition experiment. Inspect both page-level and all-atom spectra, purity,
+usage, recon and leakage before deciding whether to reduce native width.
 
 Use the distinction established earlier: the downstream adder sees the native
 VQ dimension, not the internal encoder width. The highest-probability next run

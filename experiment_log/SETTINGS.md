@@ -823,6 +823,73 @@ smooth train on V2 motivate an independent BN comparison, not another data chang
 **Operations.** Two ws-ia jobs, each1GPU/32GB/4CPU/8h after GPU preflight. Do not
 restart cancelled permanent-MEAN or C512. [Preparation note](analyses/20260911_V2_REPLICATION.md).
 
+## v3_rank — Native-VQ Effective-Rank Floor (method option, 2026-10-08)
+
+**Status:** implemented;31 GPU tests including train/resume/evaluation smoke
+passed. User-authorized formal pair registered below; efficacy remains untested.
+**Direction / hypothesis:** RQ1-B / RQ1-H13. Variants `rank2` and
+`rank4` mean target participation-ratio dimension2/4, not encoder width or K.
+Per-page native quantized codes use `mean(relu(1-r_eff/target))`, added once
+with a separate weight (initial default .01). EMA, V3 and model defaults stay
+unchanged. Disabled by default; do not retroactively relabel historical runs.
+
+Before a formal test, choose a matched successful Hex protocol and hold its
+dataset/decoder/BN/optimizer/budget fixed. Measure geometry alongside semantic
+purity, usage, reconstruction and style leakage; arithmetic remains a separate
+downstream gate. Exact collapse may be stationary; do not assume rescue from
+an old near-line checkpoint. See [method/config documentation](../manuals/v3_rank.md).
+
+## VVI-HEX-RANK-S1 — v3_rank on Hex16 Permanent MEAN
+
+**Direction / hypothesis:** RQ1-B / RQ1-H13. User-authorized2026-10-08.
+Reference: `20260915-1121__VVI-HEX-K16-REPO-MEAN-S0`, whose macro-best171 had
+full-test one-to-one1.0 but native PC1 fraction .999934 and effective rank1.000132.
+The two new configs match `configs/hex/v2/cfg_vvi_hex_k16_repo_mean_seed0.yaml`
+exactly except name, `method: v3_rank`, and the rank-regularization block.
+
+| Run ID | Native codebook | Target rank | Rank weight | Decoder | Budget |
+|---|---|---:|---:|---|---|
+| VVI-HEX-K16-MEAN-RANK4-S0 | K16 / D512 | 4 | .01 | permanent page mean | 200 epochs, scratch seed0 |
+| VVI-HEX-K16-MEAN-RANK2-S0 | K16 / D512 | 2 | .01 | permanent page mean | 200 epochs, scratch seed0 |
+
+Immutable HexDigitsV2 manifest SHA256:
+`120228b3129feddde5c9d64b0cff06a293bceb163d385ae5ce03bf2c8947254c`.
+80k/10k/10k train/val/test pages,16 fragments per page,8 balanced styles.
+C512/S512/native512, original encoder/decoder BN, batch32, float32, AdamW
+lr.001/weight decay.1, exponential scheduler .98 each20epochs, EMA.98,
+dead threshold16, relativity15, recon/four V3 weights1 and commit.1. No resume,
+warmup, rank schedule, dimension reduction, extra variance floor or arithmetic.
+Each run has2500 steps/epoch and500k total updates. Rank epsilon1e-12.
+
+**Diagnostics / retention:** inherit all Hex MEAN probes, foreground colors,
+per-style/content-group reports, BN interventions, online usage and optimization
+scales. Add six rank fields to existing loss CSV/PNG/logs. Full-validation matrices
+at original recon nodes remain balanced1250 per(content,style). Keep current,
+health-gated macro-best, best-val, and8 periodic25-completed-epoch snapshots
+(max11 files). Macro-best gate remains active>=15,ppl>=11.2,coverage>=12,
+weighted purity>=.20; no geometry-based checkpoint selection.
+
+**Preflight:** GPU formula/protocol tests, then four real train batches and full
+10k-page validation for each arm. Verify matched initialization/full sampler
+hashes, diagnostic state/RNG neutrality, strict checkpoint/evaluation loading,
+all existing diagnostics and new rank fields. Delete smoke runs immediately.
+Formal jobs: ws-ia,1GPU,32GB,4CPU,24h each; ledger before submission.
+
+**Acceptance / decision:** full10k-page test on macro-best, best-val and current;
+report rank loss and page-level rank alongside the unweighted full-codebook
+spectrum, semantic metrics, colors, style leakage and recon. Do not confuse
+sampled page rank with all-atom rank. Inherit the Hex semantic gate:
+macro/weighted/one-to-one>=.75,active16,ppl>=13,coverage>=15,recon<=.30;
+stable window>=8/10 epochs with macro/one-to-one>=.70 and the same usage floors.
+For claiming rank preservation, additionally target page and full-codebook
+effective rank>=.9*target at current and in late validation, without a material
+purity loss versus the near-perfect historical baseline (report .95 as the
+stricter semantic-retention diagnostic). These geometry thresholds are this
+experiment's engineering criteria, not literature guarantees. Rank increase
+with purity/style leakage deterioration is a trade-off, not success. If rank
+stays near1, inspect objective/gradient scale before changing unrelated knobs.
+Addition usability is a later separate evaluation, not authorized training here.
+
 ## VVI-RQ13-S3 — Warm K52 to K128 with a 128D VQ Interface
 
 **Direction / hypotheses.** RQ1-B and RQ3 / RQ1-H12 and RQ3-H7.

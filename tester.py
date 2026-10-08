@@ -123,7 +123,8 @@ class Tester:
 
     def build_model(self):
         config = self.config
-        method_specs = self.config["method"].split("_")
+        from model.rank_regularization import v3_method_specs
+        method_specs = v3_method_specs(self.config)
         self.method_specs = method_specs
 
         model_config = self.config["model_config"]
@@ -142,7 +143,7 @@ class Tester:
         self.model.load_state_dict(cp_state_dict, strict=False)
         self.model.eval()
 
-        self.loss = Loss(loss_config)
+        self.loss = Loss(loss_config, model_config=model_config)
 
     def test(
         self,
@@ -723,7 +724,8 @@ class Tester:
                     batch_data, content_idx, style_idx = batch
                     batch_data = batch_data.to(self.device)
                     recon, emb_c, emb_c_vq, vq_indices, vq_commit_loss, emb_s, *rest = (
-                        model_adapted(batch_data, freeze_codebook=True)
+                        model_adapted(batch_data, freeze_codebook=True,
+                                      **({"return_native": True} if self.loss.rank_enabled else {}))
                     )
                     losses = self.loss.compute_loss(
                         recon,
@@ -732,6 +734,7 @@ class Tester:
                         vq_commit_loss,
                         emb_s,
                         batch_data,
+                        native_vq=rest[0] if self.loss.rank_enabled else None,
                     )
                     optimizer.zero_grad()
                     losses["total_loss"].backward()

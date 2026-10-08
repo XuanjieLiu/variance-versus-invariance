@@ -30,10 +30,13 @@ HISTORY_COLUMNS = (
 class LossLogger:
     """Persist loss components and periodically render epoch-level curves."""
 
-    def __init__(self, log_dir):
+    def __init__(self, log_dir, extra_columns=()):
         self.history_path = os.path.join(log_dir, "loss_history.csv")
         self.epoch_history_path = os.path.join(log_dir, "loss_epoch_history.csv")
         self.figure_path = os.path.join(log_dir, "loss_curves.png")
+        self.loss_columns = tuple(dict.fromkeys((*LOSS_COLUMNS, *extra_columns)))
+        self.history_columns = tuple(dict.fromkeys((*HISTORY_COLUMNS, *extra_columns)))
+        self._csv_columns = {}
 
     @staticmethod
     def mean(loss_sums, count):
@@ -96,7 +99,7 @@ class LossLogger:
             for row in csv.DictReader(history_file):
                 partition = row["partition"]
                 epoch = int(row["epoch"])
-                for loss_name in LOSS_COLUMNS:
+                for loss_name in self.loss_columns:
                     value = row.get(loss_name, "")
                     if value == "":
                         continue
@@ -104,7 +107,7 @@ class LossLogger:
                         (epoch, float(value))
                     )
 
-        loss_names = [name for name in LOSS_COLUMNS if name in series]
+        loss_names = [name for name in self.loss_columns if name in series]
         if not loss_names:
             return
 
@@ -140,7 +143,7 @@ class LossLogger:
                 )
             axis.set_title(loss_name)
             axis.set_xlabel("epoch")
-            axis.set_ylabel("loss")
+            axis.set_ylabel("loss" if loss_name.endswith("loss") else "value")
             axis.grid(alpha=0.25)
             axis.legend()
 
@@ -154,8 +157,8 @@ class LossLogger:
         plt.close(fig)
         os.replace(temporary_path, self.figure_path)
 
-    @staticmethod
     def _append(
+        self,
         path,
         partition,
         scope,
@@ -165,7 +168,7 @@ class LossLogger:
         losses,
         lr,
     ):
-        row = {column: "" for column in HISTORY_COLUMNS}
+        row = {column: "" for column in self.history_columns}
         row.update(
             {
                 "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
@@ -182,8 +185,24 @@ class LossLogger:
                 row[name] = float(value)
 
         write_header = not os.path.exists(path) or os.path.getsize(path) == 0
+        columns = self._csv_columns.get(path, self.history_columns)
+        if not write_header and path not in self._csv_columns:
+            with open(path, newline="") as incoming:
+                old_columns = next(csv.reader(incoming))
+            columns = tuple(dict.fromkeys((*old_columns, *self.history_columns)))
+            if list(columns) != old_columns:
+                # Resume histories may predate optional diagnostics. Expand the
+                # header atomically; retain every existing column/value and put
+                # blanks (not fabricated zeros) in historical rank columns.
+                temporary_path = path + ".tmp"
+                with open(path, newline="") as incoming, open(temporary_path, "w", newline="") as outgoing:
+                    writer = csv.DictWriter(outgoing, fieldnames=columns)
+                    writer.writeheader()
+                    writer.writerows(csv.DictReader(incoming))
+                os.replace(temporary_path, path)
+        self._csv_columns[path] = columns
         with open(path, "a", newline="") as history_file:
-            writer = csv.DictWriter(history_file, fieldnames=HISTORY_COLUMNS)
+            writer = csv.DictWriter(history_file, fieldnames=columns)
             if write_header:
                 writer.writeheader()
             writer.writerow(row)

@@ -4,6 +4,8 @@ Smoke runs are intentionally excluded.
 
 | Run ID | Started (Asia/Dubai) | Slurm Job | Direction | Hypothesis | Setting | Status | Run name | Key change | Purpose / comparison |
 |---|---|---|---|---|---|---|---|---|---|
+| VVI-HEX-K16-MEAN-RANK4-S0 | 2026-10-08 16:24:54 | 222839 | RQ1-B | RQ1-H13 | VVI-HEX-RANK-S1 | running ws-l1-008;24h | 20261008-1623__VVI-HEX-K16-MEAN-RANK4-S0 | v3_rank target4,weight.01; K16/D512; permanent MEAN; scratch200epochs | Test non-collinearity while retaining Hex MEAN purity; compare rank2 and historical HEX MEAN |
+| VVI-HEX-K16-MEAN-RANK2-S0 | 2026-10-08 16:24:57 | 222840 | RQ1-B | RQ1-H13 | VVI-HEX-RANK-S1 | running ws-l1-014;24h | 20261008-1623__VVI-HEX-K16-MEAN-RANK2-S0 | v3_rank target2,weight.01; all other settings matched | Minimal rank floor versus rank4 and historical HEX MEAN |
 | VVI-RQ2-V2-C512-K26-HEXREPO-S0-R1 | 2026-09-17 13:20:17 | 197821 | RQ2 | RQ2-H23; H25a | VVI-RQ2-S10 | running ws-l1-002;24h | 20260917-1319__VVI-RQ2-V2-C512-K26-HEXREPO-S0-R1 | Current199→769;570 additional epochs; fragment; preserve optimizer/LR | 500500 cumulative steps vs parent130k and Hex500k; not LR-by-step matched |
 | VVI-RQ2-V2-C512-K26-HEXREPO-MEAN-S0-R1 | 2026-09-17 13:20:18 | 197822 | RQ2 | RQ2-H24; H25a | VVI-RQ2-S10 | running ws-l1-004;24h | 20260917-1319__VVI-RQ2-V2-C512-K26-HEXREPO-MEAN-S0-R1 | Current199→769; permanent page mean; all other settings retained | Matched long-budget ordinary arm and Hex MEAN; no release |
 

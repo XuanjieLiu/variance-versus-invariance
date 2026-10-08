@@ -1,0 +1,9 @@
+# V3-Rank4 configuration fragment, NOT a standalone training config.
+# Merge rank_regularization into an existing config's loss_config.
+# Preserve its existing relativity, weights, model and dataset settings.
+loss_config:
+  rank_regularization:
+    enabled: true
+    target_rank: 4
+    weight: 0.01
+    eps: 1.0e-12

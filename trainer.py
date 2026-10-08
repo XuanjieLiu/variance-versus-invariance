@@ -44,6 +44,7 @@ from utils.normfree_diagnostics import (
 )
 from model.factory import get_model
 from model.v3_loss import V3_RATIO_KEYS
+from model.rank_regularization import RANK_LOG_COLUMNS, RankRegularization, v3_method_specs
 
 
 class Trainer:
@@ -110,7 +111,8 @@ class Trainer:
 
         # performance history: {epoch: val_loss}
         self.performance_history = {}
-        self.loss_logger = LossLogger(self.log_dir)
+        rank_enabled = RankRegularization(config["loss_config"].get("rank_regularization")).enabled
+        self.loss_logger = LossLogger(self.log_dir, extra_columns=RANK_LOG_COLUMNS if rank_enabled else ())
         self.codebook_logger = CodebookMetricLogger(self.log_dir)
         self.v3_ratio_logger = V3RatioLogger(
             self.log_dir, config["loss_config"]["relativity"]
@@ -204,7 +206,7 @@ class Trainer:
         Load previous model if specified.
         """
         config = self.config
-        method_specs = self.config["method"].split("_")
+        method_specs = v3_method_specs(self.config)
         self.method_specs = method_specs
 
         model_config = self.config["model_config"]
@@ -283,7 +285,9 @@ class Trainer:
         logging.info(f"Optimizer {optimizer_config['optimizer']} set up.")
 
         # loss function
-        self.loss = Loss(loss_config)
+        self.loss = Loss(loss_config, model_config=model_config)
+        if self.loss.rank_enabled:
+            logging.info("v3_rank enabled: %s", loss_config["rank_regularization"])
 
         # load previous model
         self.start_epoch = 0
@@ -596,7 +600,7 @@ class Trainer:
                         vq_commit_loss,
                         emb_s,
                         *rest,
-                    ) = self.model(batch_data)
+                    ) = self.model(batch_data, **({"return_native": True} if self.loss.rank_enabled else {}))
 
                     # loss
                     loss_outputs = self.loss.compute_loss(
@@ -606,6 +610,7 @@ class Trainer:
                         vq_commit_loss,
                         emb_s,
                         batch_data,
+                        native_vq=rest[0] if self.loss.rank_enabled else None,
                     )
                     v3_ratios = {
                         name: loss_outputs.pop(name) for name in V3_RATIO_KEYS
@@ -899,7 +904,8 @@ class Trainer:
                     vq_commit_loss,
                     emb_s,
                     *rest,
-                ) = self.model(batch_data, freeze_codebook=True)
+                ) = self.model(batch_data, freeze_codebook=True,
+                               **({"return_native": True} if self.loss.rank_enabled else {}))
                 if style_monitor is not None:
                     style_monitor.collect(vq_indices, c_labels, s_labels)
                 loss_outputs = self.loss.compute_loss(
@@ -909,6 +915,7 @@ class Trainer:
                     vq_commit_loss,
                     emb_s,
                     batch_data,
+                    native_vq=rest[0] if self.loss.rank_enabled else None,
                 )
                 if monitor is not None:
                     monitor.collect(batch_data, outputs, emb_c, emb_s, vq_indices,

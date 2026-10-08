@@ -6,12 +6,17 @@ experiments; `ACTIVE_RUNS.md` and `ARCHIVE.md` own run lifecycle state.
 
 | Direction | Current conclusion | Confidence | Active setting | Next decision |
 |---|---|---|---|---|
-| [RQ1: content width and native low-D VQ](directions/RQ1_LOW_DIMENSION.md) | At flat K128 scratch, C32 fails while C128 reaches one transient `.771` macro checkpoint and then decays. Since the application only needs a compact discrete interface, keep the encoder wide and target `vq_codebook_dim=128`. | high | none | Warm-expand K52-WARM to K128/D128 instead of continuing either scratch run. |
+| [RQ1: content width and native low-D VQ](directions/RQ1_LOW_DIMENSION.md) | Compact native VQ remains the application goal; successful Hex16 codes are nearly collinear. Test a rank floor before assuming high purity implies useful arithmetic geometry. | geometry observed; intervention untested | VVI-HEX-RANK-S1: 222839/222840 | Compare rank4/rank2 against Hex MEAN: retain semantic quality while broadening native-code spectrum. |
 | [RQ2: phase catalysis](directions/RQ2_PHASE_CATALYSIS.md) | Hex16 succeeds at500k; S10 uppercase at130k ends with val1:1=.216/.390, active26/ppl~24. User authorizes continuation, not a new data/normalization intervention. | one matched seed; uppercase interim validation only | S10 R1 running197821/197822 | Extend both current199 to769/500500steps, retain epoch-based LR; full-test and late stability after continuation. |
 | [RQ3: joint K/D scaling](directions/RQ3_CODEBOOK_SCALING.md) | Warm K52 and PCA-warm K104 succeed, while flat K128 scratch is unstable even at C128. Healthy usage is not enough: semantic parent structure must be inherited or explicitly constrained. | high | none | Generalize the successful PCA-warm transform from K52 to K128 with D128. |
 | [RQ4 bridge: arithmetic-guided unseen-style adaptation](directions/RQ4_ARITHMETIC_STYLE_ADAPTATION.md) | V5 Teacher A passed its gate; V5 is canonical for all AGUSA hypotheses and conclusions. | teacher qualified | none in VVI | Follow the [V5 dashboard](../../v5/EXPERIMENT_SUMMARY.md): matched Teacher B, then OOD controls. |
 
 ## Metric contract
+
+Update2026-10-08: [v3_rank](../manuals/v3_rank.md) is the user-confirmed name of the
+native-VQ effective-rank-floor method (RQ1-H13). A matched Hex16 permanent-MEAN
+rank4/rank2 pair is running as222839/222840 (VVI-HEX-RANK-S1). Codebook K16
+and nativeD512 stay unchanged; the intervention is only the rank floor.
 
 - Primary selection metric: validation macro atom purity over active codes.
 - PhoneNums PAPER/REPO additionally keep best validation total loss; this
@@ -46,7 +51,15 @@ experiments; `ACTIVE_RUNS.md` and `ARCHIVE.md` own run lifecycle state.
 
 ## Prioritized next experiment queue
 
-Latest user decision2026-09-17: **S10 R1 budget continuation**. Originals
+Latest user decision2026-10-08: **VVI-HEX-RANK-S1**. Two scratch seed0 runs on
+Hex16 MEAN,200epochs/500k steps each, `method: v3_rank`, targets4/2,weight.01.
+Configs: `configs/hex/v2/cfg_vvi_hex_k16_mean_rank{4,2}_seed0.yaml`. Keep BN,
+optimizer/EMA/data and all diagnostics/retention matched to Hex MEAN. See
+[setting](SETTINGS.md#vvi-hex-rank-s1--v3_rank-on-hex16-permanent-mean).
+Both running from16:24+04 on2026-10-08, rank4 onws-l1-008 and rank2 onws-l1-014.
+See [submission and verification](analyses/20261008_V3_RANK_HEX_SUBMISSION.md).
+
+Prior user decision2026-09-17: **S10 R1 budget continuation**. Originals
 196481/196482 completed199/exit0 and are archived with validation-only interim
 metrics, not declared new full-test acceptance. Both current199 checkpoints are
 extended for570 additional epochs to769/500500 cumulative updates. Keep optimizer,

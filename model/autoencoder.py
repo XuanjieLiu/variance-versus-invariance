@@ -103,18 +103,36 @@ class CSAE(nn.Module):
         return projected + (hard_codes - projected).detach()
 
     def quantize_with_native(self, x, freeze_codebook=False, ema_update_weight=None):
-        """Quantize once and expose both decoder-space and native VQ outputs."""
-        if ema_update_weight is None:
+        """Expose the actual pre-project-out STE tensor from ONE VQ forward.
+
+        Looking up indices after forward can read EMA-updated/replaced atoms,
+        not the atoms just used by the decoder. Capture the native tensor at
+        project_out instead; no second assignment or EMA update.
+        The temporary hook is removed even when the quantizer raises.
+        """
+        captured = []
+
+        def capture_native(module, inputs):
+            captured.append(inputs[0])
+
+        handle = self.vq.project_out.register_forward_pre_hook(capture_native)
+        kwargs = {} if ema_update_weight is None else {"ema_update_weight": ema_update_weight}
+        try:
             quantized, indices, commit_loss = self.vq(
-                x, freeze_codebook=freeze_codebook
+                x, freeze_codebook=freeze_codebook, **kwargs
             )
-        else:
-            quantized, indices, commit_loss = self.vq(
-                x,
-                freeze_codebook=freeze_codebook,
-                ema_update_weight=ema_update_weight,
-            )
-        native_quantized = self.native_vq_ste_from_indices(x, indices)
+        finally:
+            handle.remove()
+        if len(captured) != 1:
+            raise RuntimeError("Expected exactly one native-VQ project_out input")
+        native_quantized = captured[0]
+        # Preserve this interface's differentiability for eval-mode encoders
+        # (e.g. frozen BN during downstream adaptation). The VQ library itself
+        # only attaches STE in train mode; the captured hard value is still the
+        # right one, unlike an EMA-updated index lookup.
+        if torch.is_grad_enabled() and not native_quantized.requires_grad:
+            projected = self.project_content_to_vq(x)
+            native_quantized = projected + (native_quantized - projected).detach()
         return quantized, native_quantized, indices, commit_loss
 
     def quantize_native_prediction(
@@ -134,14 +152,20 @@ class CSAE(nn.Module):
 
         return output
 
-    def forward(self, x, freeze_codebook=False):
+    def forward(self, x, freeze_codebook=False, return_native=False):
         emb_c, emb_s = self.encoder(x)
-        emb_c_vq, vq_indices, commit_loss = self.quantize(
-            emb_c, freeze_codebook=freeze_codebook
-        )
+        if return_native:
+            emb_c_vq, native_vq, vq_indices, commit_loss = self.quantize_with_native(
+                emb_c, freeze_codebook=freeze_codebook
+            )
+        else:
+            emb_c_vq, vq_indices, commit_loss = self.quantize(
+                emb_c, freeze_codebook=freeze_codebook
+            )
         output = self.decode(emb_c_vq, emb_s)
 
-        return output, emb_c, emb_c_vq, vq_indices, commit_loss, emb_s
+        result = (output, emb_c, emb_c_vq, vq_indices, commit_loss, emb_s)
+        return (*result, native_vq) if return_native else result
 
     def get_model_size(self):
         encoder_params = sum(p.numel() for p in self.encoder.parameters())
