@@ -44,6 +44,9 @@ class V3Loss:
         """
         super(V3Loss, self).__init__()
         self.config = config
+        if model_config is not None and model_config.get("quantizer") == "diveq":
+            if config["weights"].get("commit_loss", 0) != 0:
+                raise ValueError("DiVeQ requires commit_loss weight 0 (no auxiliary VQ loss)")
         self.eps = 1e-5
         self.rank_regularization = RankRegularization(config.get("rank_regularization"))
         self.rank_enabled = self.rank_regularization.enabled

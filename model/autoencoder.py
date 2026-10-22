@@ -17,19 +17,26 @@ class CSAE(nn.Module):
         d_emb_c = config["d_emb_c"]
         d_emb_s = config["d_emb_s"]
         self.encoder = Encoder(n_channels, W, H, d_emb_c, d_emb_s)
-        self.vq = VectorQuantize(
-            dim=d_emb_c,
-            codebook_size=config["n_atoms"],
-            codebook_dim=config.get("vq_codebook_dim"),
-            commitment_weight=1,
-            decay=config["vq_ema_decay"] if "vq_ema_decay" in config else 0.98,
-            kmeans_init=True,
-            ema_update=True,
-            rotation_trick=False,
-            threshold_ema_dead_code=config["threshold_ema_dead_code"]
-            if "threshold_ema_dead_code" in config
-            else 0,
-        )
+        self.quantizer_backend = config.get("quantizer", "ema")
+        if self.quantizer_backend == "diveq":
+            from model.diveq import build_diveq
+            self.vq = build_diveq(config)
+        elif self.quantizer_backend == "ema":
+            self.vq = VectorQuantize(
+                dim=d_emb_c,
+                codebook_size=config["n_atoms"],
+                codebook_dim=config.get("vq_codebook_dim"),
+                commitment_weight=1,
+                decay=config["vq_ema_decay"] if "vq_ema_decay" in config else 0.98,
+                kmeans_init=True,
+                ema_update=True,
+                rotation_trick=False,
+                threshold_ema_dead_code=config["threshold_ema_dead_code"]
+                if "threshold_ema_dead_code" in config
+                else 0,
+            )
+        else:
+            raise ValueError(f"Unknown quantizer: {self.quantizer_backend}")
         self.decoder = Decoder(n_channels, W, H, d_emb_c, d_emb_s)
         # Build the complete original architecture before replacing norms: keep
         # all shared Conv/Linear/VQ initialization and the RNG stream identical.
@@ -170,11 +177,13 @@ class CSAE(nn.Module):
     def get_model_size(self):
         encoder_params = sum(p.numel() for p in self.encoder.parameters())
         decoder_params = sum(p.numel() for p in self.decoder.parameters())
-        total_params = encoder_params + decoder_params
+        vq_params = sum(p.numel() for p in self.vq.parameters())
+        total_params = encoder_params + decoder_params + vq_params
 
         message = (
             f"Encoder params: {encoder_params}\n"
             + f"Decoder params: {decoder_params}\n"
+            + f"VQ params: {vq_params}\n"
             + f"Total params: {total_params}"
         )
 

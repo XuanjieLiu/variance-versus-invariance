@@ -86,6 +86,31 @@ lower the target to the *currently* active code count: that would reward collaps
 
 ## Outputs and resume
 
+For the registered Hex16 pair, one epoch is80000 training pages / batch32 =2500
+optimizer steps (single GPU, no gradient accumulation). Epoch indices start at0;
+an epoch-N checkpoint/diagnostic is after(N+1)*2500steps, not before epochN.
+The10000-page validation has313 forward batches and does not increment training
+steps. `loss_history.csv` still records step-level values; `loss_epoch_history.csv`
+and its plots summarize epochs. These units are dataset-dependent: UppercaseV2
+has20800 training pages and650steps/epoch at the same batch size.
+
+Reconstruction/confusion nodes follow `reconstruction_every_n_epochs: 25` in
+completed-epoch units:024,049,074,099,... . `extra_grid_epochs` adds individual
+zero-based nodes, including050; it does not change the periodic cadence. A run
+at epoch69 can legitimately have050 as its latest reconstruction image while
+loss/codebook/probe curves update each epoch. A macro-best improvement does not
+automatically trigger a reconstruction grid. For a posthoc grid, run on a GPU:
+
+```bash
+python run_reconstruction_grid.py --run <run-name> --active_checkpoint best \
+  --output_dir logs/<run-name>/reconstruction_diagnostics/<new-posthoc-directory>
+```
+
+This command uses full TEST mapping and test grid pages, distinct from training's
+VAL diagnostics. It emits checkpoint-specific filenames and balanced confusion
+artifacts when enabled in the backed-up config. Never overwrite periodic images
+to imply an unrecorded historical evaluation.
+
 Training, validation and health evaluation include:
 
 - `rank_loss`: unweighted mean page hinge;

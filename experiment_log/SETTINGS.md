@@ -2,6 +2,7 @@
 
 | Setting | Direction | Hypothesis | State |
 |---|---|---|---|
+| VVI-HEX-DIVEQ-S1 | RQ1-A/native-D; RQ2 quantizer | RQ1-H14; RQ2-H26 | running224397/224398 from2026-10-10 15:49+04; preflight passed |
 | VVI-H0 | RQ1/RQ2 | historical references | completed |
 | VVI-S1 | RQ1-A | RQ1-H1 | completed |
 | VVI-S2 | RQ1-B | RQ1-H2 | completed |
@@ -910,3 +911,49 @@ reconstruction<=.20. Train 150 epochs with threshold 3 and otherwise unchanged
 V3/EMA settings. Do not first change relativity, reconstruction weight, EMA
 decay, or dead-code threshold: the failed scratch runs already had saturated
 V3 loss, all codes active, high perplexity, and no under-threshold EMA clusters.
+
+## VVI-HEX-DIVEQ-S1 — DiVeQ Hex16 Width Comparison
+
+Requested2026-10-10, explicitly **without MEAN**. RQ1-H14 asks whether native
+DiVeQ4D with style4D retains Hex16 semantics; RQ2-H26 tests DiVeQ512 against the
+historical ordinary-fragment EMA REPO control. No rank penalty or warmup.
+
+| Run ID | C/S and native VQ dimension | Decoder style |
+|---|---|---|
+| VVI-HEX-K16-DIVEQ-C512S512-S0 | 512/512;D512 | ordinary fragment throughout |
+| VVI-HEX-K16-DIVEQ-C4S4-S0 | 4/4;D4 | ordinary fragment throughout |
+
+Both use immutable HexDigitsV2 manifest
+`120228b3129feddde5c9d64b0cff06a293bceb163d385ae5ce03bf2c8947254c`,
+80000/10000/10000 pages with16 fragments/page, strictly balanced16contents×8styles.
+Seed0, batch32, float32, workers4, scratch200 epochs0..199 (2500steps/epoch,
+500000 updates); C/S512 or4, K16, original ResNet/BN. Preserve Hex REPO
+AdamW lr.001/wd.1/betas.9,.999/eps1e-8 and exponential .98 every20epochs;
+relativity15, recon/four V3 weights1. Commitweight0 is required by DiVeQ.
+
+Ordinary stochastic DiVeQ is pinned to AaltoML commit
+`7e8cc2c3885707576510273da097465949f04063`: trainable uniform[0,1/K) atoms,
+noise std.001, noEMA/commit loss, batch-presence replacement every100forwards
+with threshold.01 and jitter1e-9. Deferred post-step replacement, device RNG
+and diagnostic-hard-eval details are documented in [manual](../manuals/diveq.md).
+Compare quantizer bundles, not EMA in isolation. Style width changes along
+with content width; record different model/order hashes rather than claim an
+identical initialization or training order across architectures.
+
+Retain original full-validation loss, codebook, raw V3 ratios, colors, leakage,
+BN diagnostics, per-style/group metrics and online usage/scales. Diagnostics
+must preserve model/BN/VQ/optimizer/RNG. Each25completed epochs plus
+0/10/11/12/15/20/50/100 generates recon and matched balanced confusion. Current,
+health-gated macro-best (active>=15,ppl>=11.2,coverage>=12,weighted>=.20), best-val
+and8periodic snapshots: at most11physical checkpoints. Two24h ws-ia jobs,
+1GPU/32GB/4CPU each. Configs under `configs/hex/v2/cfg_vvi_hex_k16_diveq_*`.
+
+Acceptance uses full10000-page test at macro-best/best-val/current. Macro,
+weighted and Hungarian>=.75, active16,ppl>=13,coverage>=15,recon<=.30;
+stable8/10epochs requires macro/Hungarian>=.70 and the same usage floors.
+Report foreground colors, leakage and native spectrum separately, with no
+unregistered rank/geometry gate. High purity alone is not addition success.
+If only512 succeeds, separate content4/style4 constraints next; if both fail,
+inspect quantizer scale, directional gradients, replacement and BN effects
+before concluding DiVeQ or low-dimensional VQ is impossible. Rank runs remain
+cancelled. No arithmetic training, existing-run changes, commit or push.

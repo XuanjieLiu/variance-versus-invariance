@@ -33,9 +33,9 @@ These instructions apply to every agent working in this repository.
 - New runs use the `current_and_best_macro` policy: retain exactly the latest
   current checkpoint and the best validation macro-atom-purity checkpoint.
 - Explicitly registered periodic snapshots are an exception: user-requested
-  VVI-RQ2-S3/S4/S5/S6/S7/S8/S9/S10, VVI-PN-S1, VVI-HEX-S1 and VVI-HEX-RANK-S1 runs keep `cp_snapshot_epoch*.pt` every 25 completed epochs in
+  VVI-RQ2-S3/S4/S5/S6/S7/S8/S9/S10, VVI-PN-S1, VVI-HEX-S1, VVI-HEX-RANK-S1 and VVI-HEX-DIVEQ-S1 runs keep `cp_snapshot_epoch*.pt` every 25 completed epochs in
   addition to current/best. Never prune these with current/best rotation.
-- VVI-PN-S1, VVI-HEX-S1, VVI-HEX-RANK-S1 and VVI-RQ2-S7/S8/S9/S10 additionally retain one best-validation-loss checkpoint:
+- VVI-PN-S1, VVI-HEX-S1, VVI-HEX-RANK-S1, VVI-HEX-DIVEQ-S1 and VVI-RQ2-S7/S8/S9/S10 additionally retain one best-validation-loss checkpoint:
   at most 11 files at 200 epochs; the historical S6 C128 W50 remains at most10.
   S10 R1 is the user-authorized 570-epoch continuation (absolute200..769):
   retain22 new25-epoch snapshots plus current/macro-best/best-val, at most25
@@ -88,6 +88,12 @@ These instructions apply to every agent working in this repository.
   User update2026-09-17 authorizes S10 R1 from current199 to769, reaching500,500
   cumulative updates. Restore optimizer/scheduler/scaler and keep the existing
   epoch-based LR schedule; this is budget extension, NOT a step-matched LR test.
+- VVI-HEX-DIVEQ-S1 is the 2026-10-10 authorized scratch Hex16 comparison:
+  ordinary fragment decoder in BOTH arms, C512/S512 versus C4/S4, native VQ
+  dimension equal to content width, K16,200epochs. Use trainable stochastic
+  DiVeQ, no EMA/commitment or rank penalty; preserve BN and the Hex REPO
+  optimizer/data/other objectives. This is a quantizer-bundle comparison, not
+  an isolated EMA toggle. Do not resume the cancelled rank pair or add MEAN.
 - Foreground masks are estimates from observed inputs, not clean references or
   true glyph masks. Color metrics never affect checkpoint selection or loss.
 - Balanced reconstruction-node confusion matrices show P(code | content), with

@@ -224,6 +224,16 @@ class Trainer:
             logging.info("VQ project_in/project_out parameters are frozen.")
         logging.info("Model set up.")
         logging.info(self.model.get_model_size())
+        if getattr(self.model, "quantizer_backend", "ema") == "diveq":
+            quantizer = {"backend": "diveq", "codebook_trainable": True,
+                "native_dim": self.model.vq_code_dim, "codebook_size": model_config["n_atoms"],
+                "options": model_config.get("diveq_config", {}),
+                "training": "stochastic directional reparameterization",
+                "evaluation": "exact nearest atom; no noise or usage mutation",
+                "replacement": "batch presence, after optimizer step; moments retained",
+                "reference_commit": "7e8cc2c3885707576510273da097465949f04063"}
+            self._write_json_atomic(os.path.join(self.log_dir, "quantizer_config.json"), quantizer)
+            logging.info("Quantizer: %s", quantizer)
         if 'decoder_normalization' in model_config or 'encoder_normalization' in model_config:
             normalization = {
                 'encoder': self.model.encoder_normalization,
@@ -619,8 +629,12 @@ class Trainer:
                 # backward
                 self.optimizer.zero_grad(set_to_none=True)
                 self.scaler.scale(losses["total_loss"]).backward()
+                scale_before_step = self.scaler.get_scale()
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
+                after_step = getattr(self.model.vq, "after_optimizer_step", None)
+                if after_step is not None and self.scaler.get_scale() >= scale_before_step:
+                    after_step()
 
                 global_step += 1
                 if scale_monitor is not None:

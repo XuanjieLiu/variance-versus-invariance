@@ -49,11 +49,14 @@ target learnable.
 | VVI-RQ1A-C64-K52-S0 | RQ1-A/RQ3 | best macro=.514, weighted=.374; current active=16/perplexity=4.36/recon=2.84 | more atoms do not rescue C64 cold start |
 | VVI-RQ13-C32-K128-S0 | RQ1-A/RQ3 | best macro=.423, weighted=.403, active=128, perplexity=121.33 | redundancy does not rescue native C32 |
 | VVI-RQ13-C128-K128-S0 | RQ1-A/RQ3 | epoch195 macro=.771/weighted=.768; current macro=.450 | 128D is feasible but the scratch semantic state is transient |
+| VVI-HEX-K16-MEAN-RANK4-S0 | RQ1-B geometry | stopped at current69; macro-best58 full-test1:1=.999975, recon=.02350, page rank1.01656 | semantic quality retained, target4 floor not achieved; not a completed200-epoch test |
+| VVI-HEX-K16-MEAN-RANK2-S0 | RQ1-B geometry | stopped at current70; macro-best59 full-test1:1=.9999875, recon=.04313, page rank1.82737; current VAL rank2.00279 | rank improves toward2 but visible color shifts; no arithmetic test or automatic continuation |
 
 ## Hypothesis register
 
 | ID | Hypothesis | State | Evidence / test |
 |---|---|---|---|
+| RQ1-H14 | Trainable DiVeQ with native content4D and style4D can retain Hex16 semantics from scratch without page-mean decoding. | registered2026-10-10; GPU preflight passed | VVI-HEX-DIVEQ-S1,C4/S4 versus C512/S512; both widths change, not a content-only intervention |
 | RQ1-H1 | `d_emb_c=4` causes effective-capacity and usage collapse. | supported | H0 4/4 and S1 C4/S512 |
 | RQ1-H2 | `vq_codebook_dim=4` preserves usage but enters a high-purity basin less readily. | supported | S2 R1/R2 |
 | RQ1-H3 | A phase catalyst that succeeds in RQ2 will also raise CB4 purity. | blocked on catalyst | RQ2-S1 did not pass; wait for matched RQ2-H3 test |
@@ -66,7 +69,7 @@ target learnable.
 | RQ1-H10 | C128 can retain a high-purity semantic phase when K grows from 26 to 128 from scratch. | partial, not stably supported | epoch195 full macro=.771/weighted=.768, but it is the only epoch>=.75 and current falls to .450 |
 | RQ1-H11 | K128 redundancy can lower the native content-width threshold enough to rescue C32. | not supported | best full macro=.423 despite active=128/perplexity=121.33 |
 | RQ1-H12 | A wide encoder with `vq_codebook_dim=128` can preserve a compact discrete interface and high purity through warm K52→K128 expansion. | planned | VVI-RQ13-S3; directly matches the downstream requirement |
-| RQ1-H13 | A native-VQ effective-rank floor of 2–4 can prevent near-collinearity without degrading content purity or addition usability. | implementation verified; running222839/222840 from2026-10-08 | [v3_rank](../../manuals/v3_rank.md), VVI-HEX-RANK-S1: matched Hex16 permanent-MEAN rank4/rank2, weight.01. Geometry alone is not semantic success. |
+| RQ1-H13 | A native-VQ effective-rank floor of 2–4 can prevent near-collinearity without degrading content purity or addition usability. | partial: user stopped both2026-10-08 | Target4 current69 page rank1.00072; target2 current70 rank2.00279; both keep high validation purity. Incomplete budget, no addition result; see [pause note](../analyses/20261008_V3_RANK_PAUSE_POSTHOC.md). |
 
 ## Tried, rejected, and backlog
 
@@ -89,7 +92,20 @@ target learnable.
 
 ## Next decision gate
 
-Latest user decision2026-10-08: run `v3_rank` on the successful Hex16 permanent
+Latest user decision2026-10-10: test DiVeQ, explicitly no MEAN. Run scratch
+Hex16 C512/S512 versus C4/S4 with ordinary fragment decoding and no rank loss.
+Apply the HEX-DIVEQ-S1 full-test and stability gates; inspect both native atom
+geometry and train/eval discrepancy. A C4/S4 failure is not evidence against
+native4D alone because style capacity also changes. See [protocol](../../manuals/diveq.md).
+The existing rank pair remains cancelled and is not resumed by this request.
+
+Prior user decision2026-10-08 evening: stop both `v3_rank` jobs, explain the
+diagnostic cadence and evaluate macro-best reconstruction. Both are cancelled,
+not automatically resumable jobs; preserved current checkpoints69/70 allow a
+future explicitly authorized continuation. No training architecture or cadence
+was changed: the next periodic plot would have been epoch74.
+
+The original2026-10-08 setting runs `v3_rank` on the successful Hex16 permanent
 MEAN protocol, comparing target4/2 with nativeD512 and K16 unchanged. This is a
 rank-regularization mechanism test, not yet a native-width reduction or an
 addition experiment. Inspect both page-level and all-atom spectra, purity,

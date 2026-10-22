@@ -6,7 +6,7 @@ experiments; `ACTIVE_RUNS.md` and `ARCHIVE.md` own run lifecycle state.
 
 | Direction | Current conclusion | Confidence | Active setting | Next decision |
 |---|---|---|---|---|
-| [RQ1: content width and native low-D VQ](directions/RQ1_LOW_DIMENSION.md) | Compact native VQ remains the application goal; successful Hex16 codes are nearly collinear. Test a rank floor before assuming high purity implies useful arithmetic geometry. | geometry observed; intervention untested | VVI-HEX-RANK-S1: 222839/222840 | Compare rank4/rank2 against Hex MEAN: retain semantic quality while broadening native-code spectrum. |
+| [RQ1: content width and native low-D VQ](directions/RQ1_LOW_DIMENSION.md) | EMA v3_rank target4 did not retain rank; target2 improves it. User now tests DiVeQ C512/S512 versus C4/S4, without MEAN or rank loss. | prior partial single-seed evidence; DiVeQ not yet evaluated | HEX-DIVEQ-S1; rank pair remains cancelled | Full-test purity/stability, native spectrum and recon; joint C/S reduction does not isolate content width. |
 | [RQ2: phase catalysis](directions/RQ2_PHASE_CATALYSIS.md) | Hex16 succeeds at500k; S10 uppercase at130k ends with val1:1=.216/.390, active26/ppl~24. User authorizes continuation, not a new data/normalization intervention. | one matched seed; uppercase interim validation only | S10 R1 running197821/197822 | Extend both current199 to769/500500steps, retain epoch-based LR; full-test and late stability after continuation. |
 | [RQ3: joint K/D scaling](directions/RQ3_CODEBOOK_SCALING.md) | Warm K52 and PCA-warm K104 succeed, while flat K128 scratch is unstable even at C128. Healthy usage is not enough: semantic parent structure must be inherited or explicitly constrained. | high | none | Generalize the successful PCA-warm transform from K52 to K128 with D128. |
 | [RQ4 bridge: arithmetic-guided unseen-style adaptation](directions/RQ4_ARITHMETIC_STYLE_ADAPTATION.md) | V5 Teacher A passed its gate; V5 is canonical for all AGUSA hypotheses and conclusions. | teacher qualified | none in VVI | Follow the [V5 dashboard](../../v5/EXPERIMENT_SUMMARY.md): matched Teacher B, then OOD controls. |
@@ -15,7 +15,8 @@ experiments; `ACTIVE_RUNS.md` and `ARCHIVE.md` own run lifecycle state.
 
 Update2026-10-08: [v3_rank](../manuals/v3_rank.md) is the user-confirmed name of the
 native-VQ effective-rank-floor method (RQ1-H13). A matched Hex16 permanent-MEAN
-rank4/rank2 pair is running as222839/222840 (VVI-HEX-RANK-S1). Codebook K16
+rank4/rank2 pair222839/222840 was cancelled at the user's request at21:36+04
+(VVI-HEX-RANK-S1); retained current epochs69/70. Codebook K16
 and nativeD512 stay unchanged; the intervention is only the rank floor.
 
 - Primary selection metric: validation macro atom purity over active codes.
@@ -51,13 +52,23 @@ and nativeD512 stay unchanged; the intervention is only the rank floor.
 
 ## Prioritized next experiment queue
 
-Latest user decision2026-10-08: **VVI-HEX-RANK-S1**. Two scratch seed0 runs on
+Latest user decision2026-10-10: **VVI-HEX-DIVEQ-S1**, ordinary fragment decoding
+in BOTH arms, noMEAN/warmup/rank penalty. Scratch Hex16 C512/S512 versus C4/S4,
+K16,200epochs/500k updates. DiVeQ learns atoms by task gradients, noEMA/commit
+auxiliary loss. Jobs224397/224398 started15:49+04 onws-l1-013/ws-l1-009.
+GPU preflight224394 passed onws-l1-009,41unit tests plus100steps
+and full10k validation per arm; smoke artifacts deleted. See
+[manual](../manuals/diveq.md) and [submission](analyses/20261010_DIVEQ_HEX_SUBMISSION.md).
+
+Prior user decision2026-10-08: **VVI-HEX-RANK-S1**. Two scratch seed0 runs on
 Hex16 MEAN,200epochs/500k steps each, `method: v3_rank`, targets4/2,weight.01.
 Configs: `configs/hex/v2/cfg_vvi_hex_k16_mean_rank{4,2}_seed0.yaml`. Keep BN,
 optimizer/EMA/data and all diagnostics/retention matched to Hex MEAN. See
 [setting](SETTINGS.md#vvi-hex-rank-s1--v3_rank-on-hex16-permanent-mean).
-Both running from16:24+04 on2026-10-08, rank4 onws-l1-008 and rank2 onws-l1-014.
+Both ran from16:24+04 on2026-10-08, rank4 onws-l1-008 and rank2 onws-l1-014;
+cancelled21:36+04, with checkpoints retained and no automatic resume.
 See [submission and verification](analyses/20261008_V3_RANK_HEX_SUBMISSION.md).
+Latest action: [pause and reconstruction diagnosis](analyses/20261008_V3_RANK_PAUSE_POSTHOC.md).
 
 Prior user decision2026-09-17: **S10 R1 budget continuation**. Originals
 196481/196482 completed199/exit0 and are archived with validation-only interim

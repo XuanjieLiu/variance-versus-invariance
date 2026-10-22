@@ -9,6 +9,13 @@ macro `>=0.70`, active codes `=26`, perplexity `>=20`, and coverage `>=24`.
 
 ## Current conclusion
 
+Update2026-10-10: user selects DiVeQ Hex16 with ordinary fragment decoding,
+not MEAN or v3_rank, at C512/S512 and C4/S4. H26 compares the wide arm against
+historical ordinary EMA Hex; it changes a declared quantizer bundle, including
+initialization/replacement/commit policy, not just the EMA flag. See
+[setting](../SETTINGS.md#vvi-hex-diveq-s1--diveq-hex16-width-comparison).
+No new semantic result is available before formal training.
+
 User update2026-09-17: S10 originals both completed199/130k updates with exit0.
 Current complete-validation macro/1:1=.265715/.215710(fragment) and
 .478319/.390355(permanent MEAN); active26/ppl23.97/24.46 indicate semantic mixing
@@ -197,6 +204,7 @@ has low priority. V2 is corrected but still noisy, not clean-target supervision.
 
 | ID | Hypothesis | State | Evidence / test |
 |---|---|---|---|
+| RQ2-H26 | Stochastic DiVeQ learns stable high-purity Hex16 codes without page-mean constraints or an auxiliary commitment loss. | registered2026-10-10; GPU preflight passed | HEX-DIVEQ-S1 C512/S512 versus archived ordinary HEX REPO; C4/S4 is a separate capacity stress test |
 | RQ2-H1 | The semantic transition accepts higher recon/commit cost and persists. | supported observationally in S3/C128; hysteresis untested | S3 near140; C128 near159 |
 | RQ2-H2 | Raising then restoring relativity can advance the transition. | not supported in one confounded run | VVI-RQ2-S1 |
 | RQ2-H3 | A temporary reduction in reconstruction weight can cross the basin boundary. | untested, secondary priority | matched available initialization required; S3 epoch130 no longer retained |

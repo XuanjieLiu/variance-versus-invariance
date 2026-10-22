@@ -47,7 +47,7 @@ if [[ -n "$run_name" && "$run_name" != */* && "$run_name" != . && "$run_name" !=
     git rev-parse HEAD > "$provenance_dir/git_head.txt"
     git status --short > "$provenance_dir/git_status.txt"
     git diff --binary HEAD > "$provenance_dir/tracked_changes.patch"
-    git ls-files -co --exclude-standard -z -- '*.py' '*.yaml' '*.sh' '*.sbatch' '*.md' \
+    git ls-files -co --exclude-standard -z -- '*.py' '*.yaml' '*.sh' '*.sbatch' '*.md' 'licenses/*.txt' \
         | sort -zu > "$provenance_dir/source_files.list0"
     xargs -0 sha256sum < "$provenance_dir/source_files.list0" > "$provenance_dir/source_sha256.txt"
     tar -czf "$provenance_dir/source.tar.gz" --null -T "$provenance_dir/source_files.list0"
