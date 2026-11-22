@@ -13,6 +13,17 @@ experiments; `ACTIVE_RUNS.md` and `ARCHIVE.md` own run lifecycle state.
 
 ## Metric contract
 
+Current priority2026-11-21: [IBI RD-V3 source-age transfer](analyses/20261121_RD_HEX_ACCEPTANCE_AND_SOURCE_AGE.md).
+Both audio R1 jobs309229/309230 completed10000epochs/300k, but [acceptance](analyses/20261120_INSNOTES_10000E_ACCEPTANCE.md)
+still fails the source gate: selected1:1=.3321/.7917 despite lower recon.
+The HEX LR pair completed200epochs with best/final full-VAL1:1/purity1.0.
+Select LR1e-4 by source-val loss; continuous-leakage mismatch remains explicit.
+User authorized a50epoch replica with snapshots0/4/19/49, each followed by
+three matched V5 FT jobs. Source312731 waits on GPU preflight312730; no third
+recon-only source control. The [V5 IBI plan](../../v5/research/directions/RQ6_INDUCTIVE_BIAS_PERSISTENCE.md)
+owns cross-project hypotheses; historical IBP IDs/paths remain unchanged.
+Prior entries below remain historical and are not new launch instructions.
+
 Update2026-10-08: [v3_rank](../manuals/v3_rank.md) is the user-confirmed name of the
 native-VQ effective-rank-floor method (RQ1-H13). A matched Hex16 permanent-MEAN
 rank4/rank2 pair222839/222840 was cancelled at the user's request at21:36+04

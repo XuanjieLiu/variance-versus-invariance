@@ -4,10 +4,30 @@ Smoke runs are intentionally excluded.
 
 | Run ID | Started (Asia/Dubai) | Slurm Job | Direction | Hypothesis | Setting | Status | Run name | Key change | Purpose / comparison |
 |---|---|---|---|---|---|---|---|---|---|
+| VVI-IBI-RD-HEX-RANK2-LR1E4-S0-50E | 2026-11-21 | 312731 | IBI source age | IBI-H6 | IBI-RD-HEX-S2 | pending afterok312730 audit/preflight | 20261121-1519__VVI-IBI-RD-HEX-RANK2-LR1E4-S0-50E | 50epochs; permanent0/4/19/49 | Three matched V5 FT jobs dispatched per source snapshot |
 | VVI-HEX-K16-DIVEQ-C512S512-S0 | 2026-10-10 15:49:40 | 224397 | RQ2; RQ1 control | RQ2-H26; RQ1-H14 control | VVI-HEX-DIVEQ-S1 | running ws-l1-013;24h | 20261010-1549__VVI-HEX-K16-DIVEQ-C512S512-S0 | DiVeQ native512,C/S512; fragment,noMEAN/noRank;200epochs/500k | Quantizer-bundle comparison to20260915 Hex REPO ordinary EMA |
 | VVI-HEX-K16-DIVEQ-C4S4-S0 | 2026-10-10 15:49:40 | 224398 | RQ1-A/native-D; RQ2 | RQ1-H14; RQ2-H26 | VVI-HEX-DIVEQ-S1 | running ws-l1-009;24h | 20261010-1549__VVI-HEX-K16-DIVEQ-C4S4-S0 | DiVeQ native4,C/S4; fragment,noMEAN/noRank;200epochs/500k | Compact joint content/style capacity versus DiVeQ512; not content-only isolation |
 | VVI-RQ2-V2-C512-K26-HEXREPO-S0-R1 | 2026-09-17 13:20:17 | 197821 | RQ2 | RQ2-H23; H25a | VVI-RQ2-S10 | running ws-l1-002;24h | 20260917-1319__VVI-RQ2-V2-C512-K26-HEXREPO-S0-R1 | Current199→769;570 additional epochs; fragment; preserve optimizer/LR | 500500 cumulative steps vs parent130k and Hex500k; not LR-by-step matched |
 | VVI-RQ2-V2-C512-K26-HEXREPO-MEAN-S0-R1 | 2026-09-17 13:20:18 | 197822 | RQ2 | RQ2-H24; H25a | VVI-RQ2-S10 | running ws-l1-004;24h | 20260917-1319__VVI-RQ2-V2-C512-K26-HEXREPO-MEAN-S0-R1 | Current199→769; permanent page mean; all other settings retained | Matched long-budget ordinary arm and Hex MEAN; no release |
+
+IBP-AUDIO-S2-R1 jobs309229/309230 completed9999/300000updates, wrapper exit0,
+and moved to ARCHIVE2026-11-20. GPU audit310460 reproduces all6retained roles:
+best-val fragment1:1=.332083,MEAN=.791667; both fail source gate despite lower
+reconstruction. See [10000epoch acceptance](analyses/20261120_INSNOTES_10000E_ACCEPTANCE.md).
+The image RD-V3 pair completed200epochs and moved to ARCHIVE2026-11-21.
+[Acceptance/source-age protocol](analyses/20261121_RD_HEX_ACCEPTANCE_AND_SOURCE_AGE.md)
+selects LR1e-4; the50epoch replica above uses the same healthy HEX teacher,
+not audio. Its three-per-snapshot target jobs are owned by V5 ACTIVE.
+
+IBP-AUDIO-S2 jobs298789/298790 completed2000epochs/60000updates and moved to
+ARCHIVE on2026-11-19. Mean improves selected1:1 (.379792 -> .812500) and
+MSE (.676734 -> .262874), but neither passes the source gate. Full-val
+audits309087/309091, audio and instrument-dependent permutations are recorded
+in [acceptance](analyses/20261119_INSNOTES_REPO_ACCEPTANCE.md). User subsequently
+authorized the now-completed R1 continuations; no OOD FT. Preflight309227
+passed166tests and30 resumed updates per arm, exact optimizer/model/scheduler
+restore, inherited bests/audio, and zero parent checkpoint changes; temporary
+artifacts deleted. [R1 submission](analyses/20261119_INSNOTES_REPO_CONTINUATION.md).
 
 DiVeQ pair preflight224394 passed2026-10-10,ws-l1-009; temporary smoke deleted.
 Configs, code/data hashes and protocol: [submission note](analyses/20261010_DIVEQ_HEX_SUBMISSION.md).

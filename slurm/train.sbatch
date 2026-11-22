@@ -61,6 +61,10 @@ echo "started_at=$(date --iso-8601=seconds)"
 echo "hostname=$(hostname)"
 echo "slurm_job_id=${SLURM_JOB_ID:-unknown}"
 echo "cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-unset}"
+echo "python_executable=${VVI_PYTHON:-python}"
+if [[ -n "${provenance_dir:-}" ]]; then
+    "${VVI_PYTHON:-python}" -m pip freeze > "$provenance_dir/python_packages.txt"
+fi
 echo "git_head=$(git rev-parse HEAD)"
 echo "git_status_begin"
 git status --short
@@ -71,4 +75,4 @@ fi
 nvidia-smi --query-gpu=name,uuid,memory.total,driver_version \
     --format=csv,noheader
 
-python run_training.py "$@"
+"${VVI_PYTHON:-python}" run_training.py "$@"

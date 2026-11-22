@@ -14,6 +14,14 @@
 This repository contains the code that implements *V3* in an encoder-decoder architecture, as well as the dataset preparation scripts and the evaluation code, as described in the paper:
 > Yuxuan Wu, Ziyu Wang, Bhiksha Raj and Gus Xia. Unsupervised Disentanglement of Content and Style via Variance-Invariance Constraints. In *Proceedings of the 13th International Conference on Learning Representations (ICLR)*, 2025.
 
+Local research extension: [InsNotes mel reproduction / IBP](manuals/insnotes_mel_ibp.md)
+uses an immutable seeded audio dataset and deterministic evaluation. It is
+separate from the historical STFT preparation commands below.
+
+[RD-V3 / IBI representation-distillation source controls](manuals/representation_distillation.md)
+reuse the V3 architecture and diagnostics with a frozen teacher's embeddings,
+without optimizing V3 structure losses. This is separate from OOD fine-tuning.
+
 ## 🗃️ Directory Structure
 - `dataloader/`: scripts for loading datasets
 - `dataset/`: scripts and resources for preparing datasets

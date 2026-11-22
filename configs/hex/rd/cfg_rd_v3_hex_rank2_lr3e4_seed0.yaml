@@ -1,0 +1,107 @@
+# Matched to LR1E4: only the run name and initial optimizer LR differ.
+name: VVI-IBI-RD-HEX-RANK2-LR3E4-S0
+project: V3-IBI
+method: V3
+random_seed: 0
+device: cuda
+precision: float32
+debug: false
+debug_portion: 0.01
+wandb: false
+dataloader: hex_digits_dataloader
+data_dir: ../data/HexDigitsV2
+dataset_manifest_sha256: 120228b3129feddde5c9d64b0cff06a293bceb163d385ae5ce03bf2c8947254c
+record_initial_model_hash: true
+batch_size: 32
+num_workers: 4
+epochs: 200
+log_dir: ./logs
+load_checkpoint: null
+active_checkpoint: null
+log_every_n_steps: 100
+val_every_n_epochs: 1
+plot_every_n_epochs: 1
+save_every_n_epochs: 1
+checkpoint_policy: current_and_best_macro
+save_best_macro_atom_purity: true
+save_best_validation_loss: true
+macro_best_health_gate:
+  min:
+    active_codes: 15
+    codebook_purity: 0.2
+    dominant_label_coverage: 12
+    usage_perplexity: 11.2
+model_config:
+  n_channels: 256
+  n_fragments: 16
+  fragment_len: 32
+  n_feature: 48
+  d_emb_c: 512
+  d_emb_s: 512
+  n_atoms: 16
+  threshold_ema_dead_code: 16
+  vq_ema_decay: 0.98
+  decoder_style_mode: page_mean
+  encoder_normalization: batch
+  decoder_normalization: batch
+loss_config:
+  relativity: 15
+  monitor_raw_mpd: true
+  weights:
+    recon_loss: 1.0
+    content_loss: 0.0
+    style_loss: 0.0
+    sample_loss: 0.0
+    fragment_loss: 0.0
+    commit_loss: 0.1
+representation_distillation:
+  enabled: true
+  teacher_config: ./logs/20261008-1623__VVI-HEX-K16-MEAN-RANK2-S0/config.yaml
+  teacher_checkpoint: ./logs/20261008-1623__VVI-HEX-K16-MEAN-RANK2-S0/cp_best_macro_atom_purity_epoch59.pt
+  teacher_sha256: 0dd986ed363a266653de7e7e4e73c85d0730161d4039fd68d918f5e1c1a636a9
+  content_weight: 1.0
+  style_weight: 1.0
+  calibration_pages: 2048
+  calibration_seed: 20261120
+  variance_floor: 1.0e-8
+optimizer_config:
+  optimizer: AdamW
+  lr: 0.0003
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1.0e-8
+  momentum: 0.9
+  weight_decay: 0.1
+  scheduler: exponential_decay
+  warmup_epochs: 0
+  warmup_factor: 0.1
+  lr_decay_epochs: 20
+  lr_decay_factor: 0.98
+  lr_decay_min_factor: 0.02
+  lr_anneal_epochs: 100
+  lr_anneal_min_factor: 0.01
+disentanglement_probes:
+  enabled: true
+  pages: 512
+  seed: 0
+  pca_components: 64
+  ridge: 0.01
+  foreground_color_metrics: true
+  balanced_confusion_matrix: true
+  reconstruction_every_n_epochs: 10
+  extra_grid_epochs: [0, 1, 5, 10, 20, 50, 100, 199]
+  switch_epochs: []
+bn_diagnostic:
+  enabled: true
+  every_n_epochs: 1
+  pages: 32
+  seed: 0
+  report_normalization_layers: true
+training_usage_monitor:
+  enabled: true
+  every_n_steps: 100
+per_style_codebook_monitor:
+  enabled: true
+optimization_diagnostics:
+  enabled: true
+  every_n_steps: 100

@@ -957,3 +957,190 @@ If only512 succeeds, separate content4/style4 constraints next; if both fail,
 inspect quantizer scale, directional gradients, replacement and BN effects
 before concluding DiVeQ or low-dimensional VQ is impossible. Rank runs remain
 cancelled. No arithmetic training, existing-run changes, commit or push.
+
+## IBP-AUDIO-S1 -- InsNotes mel source pretraining
+
+Registered2026-11-06. One scratch seed0 mel-input V3 source run, not an OOD
+adaptation job. Canonical questions: [V5 RQ6](../../v5/research/directions/RQ6_INDUCTIVE_BIAS_PERSISTENCE.md).
+All implementation/deviation details: [audio manual](../manuals/insnotes_mel_ibp.md).
+
+Data InsNotesMelV1 manifest SHA256
+`2a7a96f67fadc07293d064c7ab44b0b814d7037d3a1e288e7f6da4d987d2cdd6`.
+Source12MIDI pitches60..71 x12instruments,100takes/instrument,120notes/take.
+Stratified recording-disjoint80/10/10 train/val/test;800/100/100notes percell.
+128log-mel bins x32frames pernote; no train/eval feature augmentation.
+Dataset generator fixes the old missing soundfont and misaligned/unbounded
+envelope, disables synthesis effects, records every seed/version/hash.
+
+Paper parameter bundle: Adam.001/wd0, recon1, allfour V3 terms1, commit.01,
+relativity15, EMA.95, deadthreshold3.2. Repo exponential.98/20epochs schedule.
+C/S512,K12, originalaudioCNN/BN, fragment style decoding, batch32 x12notes,
+float32,4workers. Budget2000naturalepochs0..1999 =60000optimizerupdates.
+Eval/save/plot every10epochs plusfinal; audio probes/recon/confusion every50
+plusfirst/final. Label-derived metadata do not enter losses.
+
+Keep current and health-gated macro-best only (all12active,ppl>=10,
+dominant-labelcoverage>=10). This is the VVI retention policy, not the paper's
+validation-loss-selected checkpoint. Source acceptance uses both available
+roles; no test-based selection. Gate: validation one-to-one and weightedpurity
+>=.95,12active,ppl>=10, finite reconstruction; inspect two-way leakage and
+swap viability, then one-time full source-test acceptance. Failures first trigger
+data/optimization inspection, not automatic 100k+ training or OOD FT.
+
+Resources: one ws-ia RTX5000Ada,32GB,4CPU,24h. Data/setup/smoke also use
+SLURM. Dedicated audio Python executable is supplied via VVI_PYTHON; base
+xuanjie environment is unchanged. New-style FT, supervised baseline and
+new-content experiments are not automatically submitted with the source run.
+
+## IBP-AUDIO-S2 -- Mel REPO fragment versus mean-style pretraining
+
+Authorized2026-11-14 after [S1 acceptance](analyses/20261114_INSNOTES_MEL_SOURCE.md).
+Two fresh seed0 source pretrains, not resumes or OOD FT. Same immutable
+InsNotesMelV1 hash/splits/features as S1. Same C512/S512/K12/BN, batch32,
+12notes/group,4workers,float32,2000epochs/60000updates. No labels in loss.
+
+Restore the repository `cfg_v3_insnotes.yaml` optimizer/VQ parameter bundle:
+AdamW lr.001/WD.1, commitment.1, EMA.98, dead-code threshold16. Retain r15,
+four V3 weights1, recon1, exponential.98 per20epochs with floorfactor.02.
+S1 used Adam/WD0, commit.01, EMA.95, threshold3.2. This is a bundle
+comparison against S1, not an isolated weight-decay ablation. Keep requested
+mel128 instead of STFT512 and requested2000 instead of repo10000epochs.
+
+Matched pair differs ONLY in name and `model_config.decoder_style_mode`:
+
+| Arm | Decoder style input | V3 statistics input | Config |
+|---|---|---|---|
+| REPO | per-note z_s | raw per-note z_s | `configs/insnotes/cfg_vvi_insnotes_mel_repo_k12_seed0.yaml` |
+| REPO-MEAN | mean of12notes within each same-instrument sample, broadcast to all12 | raw per-note z_s | `configs/insnotes/cfg_vvi_insnotes_mel_repo_mean_k12_seed0.yaml` |
+
+Hypotheses: the repo bundle may stabilize source acquisition; averaging style
+may force pitch information through the content path. No BN recalibration or
+architecture change is bundled. Both initial model-state hashes must match.
+Mean pooling is a source-training intervention, not a posthoc repair, and must
+also be removed for a future complete constraint-removal IBP fine-tuning arm.
+
+Eval all14400balanced validation notes every10 zero-based epochs plusfinal.
+Keep latest/current, health-gated macro-best, AND independent best validation
+total loss (at most3 checkpoints, no snapshots). Macro health failure must not
+prevent loss-selected retention. Primary paper-comparison role is best-val;
+also inspect final and any macro-best. Test never selects a checkpoint.
+
+Existing loss/codebook/ratio plots remain. Audio probes/mel grids/confusions
+every50epochs, first/final. Audio WAV/HTML at epoch0,200,...,1800,1999 and
+from the best-validation checkpoint after training. Fixed sixth validation
+recording per instrument; listen to styles0/1/4 and pitches C/E/G/B, including
+the high end of the octave. Original waveform, input-mel roundtrip and model
+reconstruction share a gain per example. Griffin-Lim64iterations, fixed seed;
+all exports restore RNG and never update BN/VQ/model/optimizer. No learned
+vocoder. Re-rendered reference feature hashes must match the source manifest.
+
+Acceptance gate unchanged: validation Hungarian and weighted purity>=.95,
+12active,ppl>=10, finite losses; inspect style decodability/leakage, source
+reconstruction and swaps before target FT. Evaluate the full source test only
+after a source qualifies. No automatic budget extension or target jobs.
+Resources: two ws-ia GPU jobs,32GB/4CPU/24h each. Unit tests and full two-epoch
+smokes for both configs precede submission; smoke artifacts are deleted.
+
+## IBP-AUDIO-S2-R1 -- Source budget continuation to10000 epochs
+
+Authorized2026-11-19 after [2000epoch acceptance](analyses/20261119_INSNOTES_REPO_ACCEPTANCE.md).
+The repository `cfg_v3_insnotes.yaml` specifies10000epochs. Continue BOTH
+matched REPO fragment/MEAN arms from their own current1999, NOT loss-best
+or macro-best. Hypothesis: the additional budget may recover shared pitch
+identities, including MEAN's instrument-dependent permutations, or stabilize
+fragment's degraded endpoint. A failed2000epoch gate does not settle this
+long-budget comparison.
+
+- `epochs: 8000` is incremental: absolute2000..9999,240000 new updates;
+  total10000 natural epochs/300000updates at30updates/epoch.
+- Same immutable mel data, architecture, original BN, optimizer/loss/EMA,
+  batch32x12notes, workers4 and seed0. Only continuation metadata/budget changes.
+- Restore all model/BN/EMA, AdamW moments, scheduler and scaler. LR at2000
+  is .0001326195559; continue .98^(epoch/20) with floor.00002 reached3873.
+  Do not reset LR to.001 or perform BN recalibration.
+- Independent R1 directories inherit completed scalar histories (including
+  audio diagnostics), macro-best and loss-best weights. Parent directories
+  and listening examples are unchanged; lineage records their paths/hashes.
+- Retain at most current + macro-best + loss-best. Loss-best is compared
+  against the entire2000+8000epoch history, not reset at continuation.
+- Validation every10epochs; audio probes/grids/confusion every50; WAV/HTML
+  every200 and final9999; export the global loss-selected best after completion.
+- Checkpoints lack RNG state; both continuations restart with seed0. This is
+  optimizer-preserving epoch-boundary continuation, NOT bitwise equivalence
+  to an uninterrupted10000epoch trajectory. No promise of original data order.
+- Keep the source gate/global Hungarian definition and test isolation from S2.
+  Record2000 versus10000 endpoints as separate budget results; do not relabel
+  the historical2000epoch runs successful. No OOD FT automatically follows.
+- Two ws-ia GPU jobs,32GB/4CPU/24h. Preflight: unit tests plus one full resumed
+  epoch per arm, exact restored states/LR, historical best/audio inheritance,
+  finite losses/nonzero encoder-decoder gradients, final checkpoint and best
+  listening export. Delete temporary smoke artifacts.
+
+Configs: `configs/insnotes/cfg_vvi_insnotes_mel_repo_k12_seed0_r1_10000e.yaml`
+and `configs/insnotes/cfg_vvi_insnotes_mel_repo_mean_k12_seed0_r1_10000e.yaml`.
+
+## IBI-RD-HEX-S2 -- Source age and matched reconstruction-only transfer
+
+Authorized2026-11-21. The prior LR1e-4/3e-4 source pair completed200epochs.
+Choose LR1e-4 from its lower source-validation RD objective, NOT OOD performance.
+Earlier weights were rotated out; reproduce a new trajectory rather than
+claim recovered checkpoints. Keep seed0/teacher/data/loss/optimizer unchanged.
+Reduce budget to50epochs/125000updates; preserve zero-based0/4/19/49
+(completed1/5/20/50epochs,2500/12500/50000/125000updates). These fixed ages
+are independent of subsequent FT results. Source recon still fluctuates;
+near-perfect mapping in epoch0 is not a claim of complete convergence.
+
+`snapshot_epochs` adds explicit permanent snapshots, retaining current and
+both best roles separately (at most7 files). Snapshots use atomic replacement;
+current/best rotation never deletes them. The SLURM campaign wrapper launches
+the earliest three V5 FT tasks as soon as snapshot0 exists, then three per
+later snapshot. It does not pause source optimization or consume its RNG.
+Failed validation/preflight blocks source via `afterok`; failed source stops
+later dispatch. Receipt contains each downstream Slurm job ID.
+
+FT uses the original V5 no-V3-loss protocols without adding distillation or
+arithmetic: new-style random triplets K16 frozen; new-content old-style K32
+mixed replay; all22-content new-style K32 mixed replay. Full details/ownership
+in [V5 RQ6](../../v5/research/directions/RQ6_INDUCTIVE_BIAS_PERSISTENCE.md).
+Source50epochs runs on ws-ia/32GB/4CPU/8h; each FT10k on ws-ia/32GB/4CPU/24h.
+No new source seed replication or audio FT is implied.
+
+## IBI-RD-HEX-S1 -- Representation-distilled image V3 source pair
+
+Authorized2026-11-20. The user selected image HEX, not the failed audio
+source, and deferred recon-only pretraining. This tests whether a random
+same-architecture student can acquire comparable source representations by
+embedding supervision, without personally optimizing V3's discovery objective.
+It does not yet test IBI under OOD fine-tuning or isolate all unsupervised
+learning: teacher targets carry information from unsupervised V3 pretraining.
+
+Single teacher: HEX MEAN RANK2 macro-best59, SHA256
+`0dd986ed363a266653de7e7e4e73c85d0730161d4039fd68d918f5e1c1a636a9`.
+GPU audit310464 full10000page VAL:1:1/purity=.99998125,16active,ppl~16,
+recon=.04327776. Source factor/leakage diagnostics are also archived, so this
+is not a claim that the teacher is perfectly disentangled.
+
+Two independent-student seeds0 with common initial state, same source train
+pages/order, same loss and architecture. The ONLY arm difference is initial
+AdamW LR1e-4 versus3e-4. WD.1, exp.98 per20epochs/floorfactor.02, batch32x16,
+200epochs/500000updates. Teacher eval/no-grad; own student K16 image-EMA
+initialization/updates; encoder/decoder BN train; page-mean decoding retained.
+No copied teacher weights/codebook and no arithmetic or labels in training.
+
+`L = recon + .1 commit + NMSE(raw content, teacher) + NMSE(raw style, teacher)`.
+Fixed scalar normalizers from2048train pages/seed20261120; no val/test fitting.
+Original V3/rank losses have no optimization gradients. Raw V3 components and
+ratios remain detached diagnostics. Same mapping/purity/usage/leakage/color/BN
+diagnostics and reconstruction plots as original V3. Validate complete source
+val each epoch; current/macro-best/min-val-RD-total-loss, at most3 checkpoints.
+The macro-retention gate is unchanged, but readiness for future FT requires
+>=.99 Hungarian/purity,16active,ppl>=15, recon<=1.25xteacher, and inspection
+of matched source leakage/per-style behavior (initial tolerance+.05). Source
+NMSE is reported, not used to invent a posthoc pass threshold. Test remains
+sealed until acceptance; no automatic OOD launch regardless of gate outcome.
+
+One20update real-CUDA smoke per arm (10fresh+10resume), exact saved-loss
+reproduction, common init hashes, unchanged teacher/BN/VQ, finite losses,
+student encoder/decoder gradients, complete metrics/plots and cleanup passed
+in310464. This is engineering evidence only. All compute through SLURM;
+formal2x ws-ia GPU,32GB,4CPU,24h. See [RD-V3 manual/config reference](../manuals/representation_distillation.md).

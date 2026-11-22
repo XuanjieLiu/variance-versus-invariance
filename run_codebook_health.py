@@ -12,6 +12,7 @@ import yaml
 
 from model.factory import get_model
 from model.v3_loss import V3Loss
+from model.distillation_loss import build_distillation_loss, validate_distillation_config
 from utils.codebook_metrics import (
     batch_confusion_counts,
     compute_alias_geometry_metrics,
@@ -153,7 +154,10 @@ def evaluate(
     if hasattr(model, "set_decoder_epoch"):
         model.set_decoder_epoch(checkpoint_state.get("epoch", 0))
     model.eval()
-    loss_fn = V3Loss(config["loss_config"], model_config=config["model_config"])
+    loss_fn = (build_distillation_loss(config, device,
+                   saved_metadata=checkpoint_state.get("representation_distillation"))
+               if validate_distillation_config(config) else
+               V3Loss(config["loss_config"], model_config=config["model_config"]))
     from utils.foreground_color import ForegroundColorAccumulator
     colors = (ForegroundColorAccumulator(import_module("dataloader." + config["dataloader"]).S_LIST)
               if config.get("disentanglement_probes", {}).get("foreground_color_metrics") else None)

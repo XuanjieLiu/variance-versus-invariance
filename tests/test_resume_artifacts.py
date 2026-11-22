@@ -70,6 +70,22 @@ class ResumeArtifactTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 inherit_resume_artifacts(checkpoint, dest, dict(epoch=40))
 
+    def test_rejects_changed_audio_eval_protocol(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, dest = Path(directory) / "source", Path(directory) / "dest"
+            source.mkdir()
+            dest.mkdir()
+            checkpoint = source / "cp_current_epoch1999.pt"
+            checkpoint.write_bytes(b"current")
+            protocol = dict(dataset_manifest_sha256="old", fit_recordings=[],
+                            score_recordings=[], evaluation_items=[], grid_items=[],
+                            content_names=[], style_names=[], pca_components=32, ridge=.01)
+            (source / "audio_diagnostic_protocol.json").write_text(json.dumps(protocol))
+            protocol["dataset_manifest_sha256"] = "changed"
+            (dest / "audio_diagnostic_protocol.json").write_text(json.dumps(protocol))
+            with self.assertRaisesRegex(ValueError, "audio diagnostic protocol"):
+                inherit_resume_artifacts(checkpoint, dest, dict(epoch=1999))
+
 
 if __name__ == "__main__":
     unittest.main()

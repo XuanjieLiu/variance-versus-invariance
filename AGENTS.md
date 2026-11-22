@@ -41,6 +41,29 @@ These instructions apply to every agent working in this repository.
   retain22 new25-epoch snapshots plus current/macro-best/best-val, at most25
   files per R1 run. Keep parent snapshots in the parent run, without duplication.
   Never use test labels or test losses to choose any retained checkpoint.
+- IBP-AUDIO-S2 is the 2026-11-14 authorized mel REPO fragment/MEAN pair:
+  2000epochs/60000updates each, same data/seed and original repository
+  optimizer/VQ bundle. Retain current + health-gated macro-best + independent
+  best-validation-loss (at most3 files, no periodic model snapshots). Audio
+  previews are diagnostic, including a final export of the loss-selected model.
+- IBP-AUDIO-S2-R1 is the 2026-11-19 authorized continuation of BOTH source
+  arms from current1999 to9999:8000 additional epochs/240000updates, total
+  10000epochs/300000updates. Preserve optimizer/scheduler/scaler, data and
+  all hyperparameters; inherit histories and retained bests into separate R1
+  directories. Keep the same at-most3 checkpoint policy. No OOD FT is implied.
+- IBI-RD-HEX-S1 is the 2026-11-20 authorized image representation-distillation
+  source pair: independent student encoder/decoder/VQ, one frozen RANK2
+  epoch59 teacher, LR1e-4 versus3e-4,200epochs/500000updates. Keep current,
+  health-gated macro-best and independent minimum-validation-RD-loss (at most3
+  checkpoints). V3/rank terms are diagnostics only; targets/calibration use
+  source data, never OOD. Do not start OOD FT or a third recon-only control
+  without a separate user decision. The preferred research name is now IBI;
+  preserve historical IBP run IDs and artifact paths.
+- IBI-RD-HEX-S2 is the 2026-11-21 authorized LR1e-4 source replica:50epochs,
+  permanent zero-based snapshots0/4/19/49 plus current/macro-best/best-val.
+  This exception retains early source states for matched V5 reconstruction-only
+  fine-tuning in new style, new content, and both. The earliest three FT jobs
+  may start once snapshot0 is atomically saved; no OOD outcome selects ages.
 - S7 BN interventions are diagnostics only. Freeze VQ and restore every buffer,
   module mode and RNG state, including on errors; never select checkpoints using
   the small-batch intervention metrics. Do not change the training BN architecture.

@@ -6,6 +6,7 @@ PARTITION="${VVI_PARTITION:-ws-ia}"
 MEMORY="${VVI_MEMORY:-32G}"
 CPUS="${VVI_CPUS:-4}"
 TIME_LIMIT="${VVI_TIME:-08:00:00}"
+JOB_SCRIPT="${VVI_JOB_SCRIPT:-slurm/train.sbatch}"
 
 if [[ $# -ne 3 ]]; then
     echo "Usage: scripts/submit_slurm.sh <config> <run-name> <run-id>" >&2
@@ -23,6 +24,14 @@ if [[ ! -f "$config_path" ]]; then
 fi
 
 mkdir -p slurm_logs
+if [[ ! -f "$JOB_SCRIPT" ]]; then
+    echo "Job script does not exist: $JOB_SCRIPT" >&2
+    exit 2
+fi
+dependency_args=()
+if [[ -n "${VVI_DEPENDENCY:-}" ]]; then
+    dependency_args+=(--dependency="$VVI_DEPENDENCY")
+fi
 job_name="$(printf '%s' "$run_id" | tr '[:upper:]' '[:lower:]')"
 
 job_id="$(
@@ -36,7 +45,8 @@ job_id="$(
         --job-name="$job_name" \
         --output="slurm_logs/%x-%j.out" \
         --error="slurm_logs/%x-%j.err" \
-        slurm/train.sbatch \
+        "${dependency_args[@]}" \
+        "$JOB_SCRIPT" \
         --config "$config_path" \
         --name "$run_name"
 )"

@@ -34,6 +34,7 @@ from utils.checkpoint_transform import (
 )
 from utils.loss_logging import LossLogger
 from utils.resume_artifacts import inherit_resume_artifacts
+from utils.checkpoint_schedule import snapshot_due, validate_snapshot_schedule
 from utils.disentanglement_monitor import DisentanglementMonitor
 from utils.objective_schedule import apply_loss_schedules
 from utils.objective_schedule_logging import ObjectiveScheduleLogger
@@ -45,12 +46,16 @@ from utils.normfree_diagnostics import (
 from model.factory import get_model
 from model.v3_loss import V3_RATIO_KEYS
 from model.rank_regularization import RANK_LOG_COLUMNS, RankRegularization, v3_method_specs
+from model.distillation_loss import (
+    DISTILLATION_COLUMNS, build_distillation_loss, validate_distillation_config,
+)
 
 
 class Trainer:
     def __init__(self, config):
         # basic configs
         self.config = config
+        validate_snapshot_schedule(config)
         if self.config["debug"]:
             self.portion = self.config.get("debug_portion", 0.01)
             self.config["epochs"] = 1
@@ -112,7 +117,12 @@ class Trainer:
         # performance history: {epoch: val_loss}
         self.performance_history = {}
         rank_enabled = RankRegularization(config["loss_config"].get("rank_regularization")).enabled
-        self.loss_logger = LossLogger(self.log_dir, extra_columns=RANK_LOG_COLUMNS if rank_enabled else ())
+        distillation_enabled = validate_distillation_config(config)
+        extra_columns = (RANK_LOG_COLUMNS if rank_enabled else ()) + (
+            DISTILLATION_COLUMNS if distillation_enabled else ())
+        self.loss_logger = LossLogger(self.log_dir, extra_columns=extra_columns,
+            diagnostic_columns=("v3_loss", "content_loss", "style_loss", "sample_loss", "fragment_loss")
+            if distillation_enabled else ())
         self.codebook_logger = CodebookMetricLogger(self.log_dir)
         self.v3_ratio_logger = V3RatioLogger(
             self.log_dir, config["loss_config"]["relativity"]
@@ -182,6 +192,17 @@ class Trainer:
             shuffle=False,
         )
         logging.info("Validation dataloader ready.")
+        self.audio_diagnostic = None
+        if config.get("audio_diagnostics", {}).get("enabled", False):
+            from utils.audio_diagnostics import AudioDiagnostics
+            playback_config = config["audio_diagnostics"].get("playback", {})
+            if (playback_config.get("enabled", False)
+                    and playback_config.get("export_best_validation", True)
+                    and not config.get("save_best_validation_loss", False)):
+                raise ValueError("Best audio export requires save_best_validation_loss")
+            self.audio_diagnostic = AudioDiagnostics(
+                self.log_dir, self.val_loader.dataset,
+                config["audio_diagnostics"], config["model_config"]["n_atoms"], self.C_LIST)
         self.bn_diagnostic = None
         if config.get("bn_diagnostic", {}).get("enabled", False):
             self.bn_diagnostic = BatchNormDiagnostic(
@@ -309,6 +330,8 @@ class Trainer:
                 checkpoint_state = torch.load(
                     cp_path, map_location=self.device, weights_only=False
                 )
+                if validate_distillation_config(config) and "representation_distillation" not in checkpoint_state:
+                    raise ValueError("Cannot initialize an RD-V3 student by resuming a non-distillation model")
                 completed_epoch = int(checkpoint_state["epoch"])
                 self.start_epoch = completed_epoch + 1
                 transform_config = self.config.get("checkpoint_transform")
@@ -470,6 +493,18 @@ class Trainer:
                 os.path.join(self.log_dir, "initialization.json"),
             )
 
+        if validate_distillation_config(config):
+            metadata = (checkpoint_state.get("representation_distillation")
+                        if checkpoint_state is not None else None)
+            if checkpoint_state is not None and metadata is None:
+                raise ValueError("Cannot resume RD-V3 from a non-distillation checkpoint")
+            self.loss = build_distillation_loss(
+                config, self.device, train_dataset=self.train_loader.dataset,
+                saved_metadata=metadata)
+            self._write_json_atomic(os.path.join(self.log_dir, "distillation_protocol.json"),
+                                    self.loss.distillation_metadata)
+            logging.info("RD-V3 teacher verified; normalized source embedding targets; V3 terms diagnostic only")
+
     def train(self):
         """
         It turns out having a Lightning-like style. But I hope I can make myself clear and aware of what it is doing.
@@ -479,6 +514,8 @@ class Trainer:
         if n_epochs <= 0:
             raise ValueError("epochs must be a positive incremental epoch count.")
         end_epoch = self.start_epoch + n_epochs - 1
+        if getattr(self, "audio_diagnostic", None) is not None:
+            self.audio_diagnostic.config["final_epoch"] = end_epoch
         global_step = self.start_epoch * len(self.train_loader)
         logging.info(
             "Training epoch range: %s-%s (%s incremental epochs).",
@@ -725,7 +762,7 @@ class Trainer:
             # Validation reuses the full forward pass to collect codebook metrics.
             running_losses_val = None
             codebook_metrics_val = None
-            if epoch % config["val_every_n_epochs"] == 0:
+            if epoch % config["val_every_n_epochs"] == 0 or epoch == end_epoch:
                 validation = self._collect_validation(epoch, global_step)
                 running_losses_val = validation["losses"]
                 validation_v3_ratios = validation["v3_ratios"]
@@ -811,7 +848,7 @@ class Trainer:
             plot_every_n_epochs = config.get(
                 "plot_every_n_epochs", config["val_every_n_epochs"]
             )
-            if epoch % plot_every_n_epochs == 0:
+            if epoch % plot_every_n_epochs == 0 or epoch == end_epoch:
                 try:
                     self.loss_logger.plot()
                 except Exception:
@@ -854,7 +891,7 @@ class Trainer:
 
             # Keep exactly one current checkpoint; macro-best is maintained
             # independently above.
-            if epoch % config["save_every_n_epochs"] == 0:
+            if epoch % config["save_every_n_epochs"] == 0 or epoch == end_epoch:
                 if running_losses_val is None:
                     logging.warning(
                         "Skipping checkpoint at epoch %s because validation did not run.",
@@ -874,9 +911,13 @@ class Trainer:
                         codebook_metrics_val["macro_atom_purity"],
                     )
 
-            snapshot_every = int(config.get("snapshot_every_n_epochs", 0))
-            if snapshot_every > 0 and (epoch + 1) % snapshot_every == 0:
+            if snapshot_due(config, epoch):
                 self._save_periodic_checkpoint(epoch)
+
+        if getattr(self, "audio_diagnostic", None) is not None:
+            path = self.audio_diagnostic.export_best_validation_audio(config, self.device)
+            if path is not None:
+                logging.info("Best validation checkpoint audio exported to %s", path)
 
     def _save_periodic_checkpoint(self, epoch):
         snapshot_path = os.path.join(self.log_dir, f"cp_snapshot_epoch{epoch}.pt")
@@ -895,6 +936,9 @@ class Trainer:
         )
         sample_count = 0
         monitor = getattr(self, "disentanglement_monitor", None) if epoch is not None else None
+        audio_monitor = getattr(self, "audio_diagnostic", None) if epoch is not None else None
+        if audio_monitor is not None:
+            audio_monitor.begin(epoch, global_step, self.model.active_decoder_style_mode)
         bn_diagnostic = getattr(self, "bn_diagnostic", None) if epoch is not None else None
         style_monitor = getattr(self, 'per_style_codebook_monitor', None) if epoch is not None else None
         if style_monitor is not None:
@@ -909,7 +953,8 @@ class Trainer:
                 batch_data = batch_data.to(device=self.device, non_blocking=True)
                 if bn_diagnostic is not None:
                     bn_diagnostic.collect(batch_data, c_labels, s_labels)
-                sample_count += int(batch_data.shape[0])
+                batch_size = int(batch_data.shape[0])
+                sample_count += batch_size
                 (
                     outputs,
                     emb_c,
@@ -934,12 +979,15 @@ class Trainer:
                 if monitor is not None:
                     monitor.collect(batch_data, outputs, emb_c, emb_s, vq_indices,
                                     c_labels, s_labels, self.loss.last_statistics)
+                if audio_monitor is not None:
+                    audio_monitor.collect(batch_data, outputs, emb_c, emb_s, vq_indices,
+                                          c_labels, s_labels, self.loss.last_statistics)
                 ratios = {name: loss_outputs.pop(name) for name in V3_RATIO_KEYS}
                 for name, value in loss_outputs.items():
-                    running_losses[name] = running_losses.get(name, 0.0) + value.item()
+                    running_losses[name] = running_losses.get(name, 0.0) + value.item() * batch_size
                 for name, value in ratios.items():
                     running_v3_ratios[name] = (
-                        running_v3_ratios.get(name, 0.0) + value.item()
+                        running_v3_ratios.get(name, 0.0) + value.item() * batch_size
                     )
                 confusion_counts += batch_confusion_counts(
                     vq_indices,
@@ -948,10 +996,11 @@ class Trainer:
                     len(self.C_LIST),
                 )
 
-        batch_count = len(self.val_loader)
-        losses = {name: value / batch_count for name, value in running_losses.items()}
+        if sample_count == 0:
+            raise ValueError("Validation requires at least one sample")
+        losses = {name: value / sample_count for name, value in running_losses.items()}
         ratios = {
-            name: value / batch_count for name, value in running_v3_ratios.items()
+            name: value / sample_count for name, value in running_v3_ratios.items()
         }
         confusion_counts_cpu = confusion_counts.cpu().numpy()
         if style_monitor is not None:
@@ -973,6 +1022,10 @@ class Trainer:
             logging.info("VALIDATION PROBES - Epoch %s | %s", epoch, probe_metrics)
             if config["wandb"]:
                 self._write_summary(global_step, epoch, probe_metrics, "val_probe")
+        if audio_monitor is not None:
+            audio_metrics = audio_monitor.finish(confusion_counts_cpu, self.device)
+            if audio_metrics:
+                logging.info("VALIDATION AUDIO - Epoch %s | %s", epoch, audio_metrics)
         metrics = {
             **compute_assignment_metrics(confusion_counts_cpu),
             **compute_alias_geometry_metrics(
@@ -1008,7 +1061,7 @@ class Trainer:
                 self.wandb.log({f"{partition}/fig": self.wandb.Image(fig)}, step=i_step)
 
     def _checkpoint_state(self, epoch):
-        return {
+        state = {
             "epoch": epoch,
             "model": self.model.state_dict(),
             "optimizer": self.optimizer.state_dict(),
@@ -1021,6 +1074,10 @@ class Trainer:
             "best_validation_loss": getattr(self, "best_validation_loss", None),
             "best_validation_epoch": getattr(self, "best_validation_epoch", None),
         }
+        metadata = getattr(getattr(self, "loss", None), "distillation_metadata", None)
+        if metadata is not None:
+            state["representation_distillation"] = metadata
+        return state
 
     def _consider_best_validation_loss(self, epoch, val_loss):
         value = float(val_loss)

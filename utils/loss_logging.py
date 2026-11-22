@@ -30,13 +30,14 @@ HISTORY_COLUMNS = (
 class LossLogger:
     """Persist loss components and periodically render epoch-level curves."""
 
-    def __init__(self, log_dir, extra_columns=()):
+    def __init__(self, log_dir, extra_columns=(), diagnostic_columns=()):
         self.history_path = os.path.join(log_dir, "loss_history.csv")
         self.epoch_history_path = os.path.join(log_dir, "loss_epoch_history.csv")
         self.figure_path = os.path.join(log_dir, "loss_curves.png")
         self.loss_columns = tuple(dict.fromkeys((*LOSS_COLUMNS, *extra_columns)))
         self.history_columns = tuple(dict.fromkeys((*HISTORY_COLUMNS, *extra_columns)))
         self._csv_columns = {}
+        self.diagnostic_columns = set(diagnostic_columns)
 
     @staticmethod
     def mean(loss_sums, count):
@@ -141,7 +142,8 @@ class LossLogger:
                     "symlog",
                     linthresh=max(min(positive_values), 1e-8),
                 )
-            axis.set_title(loss_name)
+            suffix = " (diagnostic only)" if loss_name in self.diagnostic_columns else ""
+            axis.set_title(loss_name + suffix)
             axis.set_xlabel("epoch")
             axis.set_ylabel("loss" if loss_name.endswith("loss") else "value")
             axis.grid(alpha=0.25)

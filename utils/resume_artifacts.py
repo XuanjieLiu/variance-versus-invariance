@@ -15,6 +15,7 @@ HISTORIES = (
     "foreground_color_epoch_history.csv", "training_codebook_usage.csv",
     "bn_diagnostic_epoch_history.csv", "optimization_scale_history.csv",
     "optimization_scale_epoch_history.csv", "per_style_codebook_epoch_history.csv",
+    "audio_diagnostic_history.csv",
 )
 
 
@@ -52,6 +53,16 @@ def inherit_resume_artifacts(source_checkpoint, destination_dir, checkpoint_stat
             if old[key] != new[key]:
                 raise ValueError(f"Resume diagnostic protocol differs in {key}")
 
+    audio_protocol = "audio_diagnostic_protocol.json"
+    if (source / audio_protocol).exists() and (destination / audio_protocol).exists():
+        old = json.loads((source / audio_protocol).read_text())
+        new = json.loads((destination / audio_protocol).read_text())
+        for key in ("dataset_manifest_sha256", "fit_recordings", "score_recordings",
+                    "evaluation_items", "grid_items", "content_names", "style_names",
+                    "pca_components", "ridge"):
+            if old[key] != new[key]:
+                raise ValueError(f"Resume audio diagnostic protocol differs in {key}")
+
     best_path = None
     best_epoch = checkpoint_state.get("best_macro_epoch")
     if checkpoint_state.get("best_macro_atom_purity") is not None:
@@ -88,6 +99,7 @@ def inherit_resume_artifacts(source_checkpoint, destination_dir, checkpoint_stat
         "inherited_macro_best": str(best_path) if best_path else None,
         "parent_snapshot_paths": [str(path) for path in sorted(source.glob("cp_snapshot_epoch*.pt"))],
         "parent_reconstruction_directory": str(source / "reconstruction_diagnostics"),
+        "parent_audio_examples_directory": str(source / "audio_examples"),
         "optimizer_scheduler_scaler_restored": True,
         "rng_restored": False,
         "note": "Legacy checkpoints lack RNG state. Epoch-boundary resume, not bitwise data-order continuation.",

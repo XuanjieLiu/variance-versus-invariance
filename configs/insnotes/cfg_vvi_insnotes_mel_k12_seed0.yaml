@@ -1,0 +1,75 @@
+# IBP-AUDIO-S1: paper objective/optimizer bundle, explicitly mel-input reproduction.
+name: VVI-IBP-INSNOTES-MEL-K12-S0
+project: V3-IBP
+method: V3
+random_seed: 0
+device: cuda
+precision: float32
+debug: false
+wandb: false
+dataloader: insnotes_mel_dataloader
+data_dir: ../data/InsNotesMelV1
+dataset_manifest_sha256: 2a7a96f67fadc07293d064c7ab44b0b814d7037d3a1e288e7f6da4d987d2cdd6
+record_initial_model_hash: true
+batch_size: 32
+num_workers: 4
+epochs: 2000
+log_dir: ./logs
+load_checkpoint: null
+active_checkpoint: null
+log_every_n_steps: 10
+val_every_n_epochs: 10
+plot_every_n_epochs: 10
+save_every_n_epochs: 10
+checkpoint_policy: current_and_best_macro
+save_best_macro_atom_purity: true
+macro_best_health_gate:
+  min:
+    active_codes: 12
+    usage_perplexity: 10.0
+    dominant_label_coverage: 10
+model_config:
+  n_channels: 512
+  n_fragments: 12
+  fragment_len: 32
+  n_feature: 128
+  d_emb_c: 512
+  d_emb_s: 512
+  n_atoms: 12
+  threshold_ema_dead_code: 3.2
+  vq_ema_decay: 0.95
+  decoder_style_mode: fragment
+loss_config:
+  relativity: 15
+  monitor_raw_mpd: true
+  weights:
+    recon_loss: 1.0
+    content_loss: 1.0
+    style_loss: 1.0
+    sample_loss: 1.0
+    fragment_loss: 1.0
+    commit_loss: 0.01
+optimizer_config:
+  optimizer: Adam
+  lr: 0.001
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1.0e-8
+  momentum: 0.9
+  weight_decay: 0.0
+  scheduler: exponential_decay
+  warmup_epochs: 0
+  warmup_factor: 0.1
+  lr_decay_epochs: 20
+  lr_decay_factor: 0.98
+  lr_decay_min_factor: 0.02
+  lr_anneal_epochs: 100
+  lr_anneal_min_factor: 0.01
+audio_diagnostics:
+  enabled: true
+  every_n_epochs: 50
+  pca_components: 32
+  ridge: 0.01
+training_usage_monitor:
+  enabled: true
+  every_n_steps: 100
