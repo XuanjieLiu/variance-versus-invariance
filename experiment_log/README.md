@@ -18,9 +18,10 @@ Both audio R1 jobs309229/309230 completed10000epochs/300k, but [acceptance](anal
 still fails the source gate: selected1:1=.3321/.7917 despite lower recon.
 The HEX LR pair completed200epochs with best/final full-VAL1:1/purity1.0.
 Select LR1e-4 by source-val loss; continuous-leakage mismatch remains explicit.
-User authorized a50epoch replica with snapshots0/4/19/49, each followed by
-three matched V5 FT jobs. Source312731 waits on GPU preflight312730; no third
-recon-only source control. The [V5 IBI plan](../../v5/research/directions/RQ6_INDUCTIVE_BIAS_PERSISTENCE.md)
+The 50-epoch replica312731 completed and saved snapshots0/4/19/49.
+[The authorized continuation](SETTINGS.md#ibi-rd-hex-s2-r1----continue-through-completed-epoch-100)
+resumes current49 through absolute99, followed by three matched V5 FT jobs.
+The [V5 IBI plan](../../v5/research/directions/RQ6_INDUCTIVE_BIAS_PERSISTENCE.md)
 owns cross-project hypotheses; historical IBP IDs/paths remain unchanged.
 Prior entries below remain historical and are not new launch instructions.
 

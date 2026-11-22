@@ -64,6 +64,11 @@ These instructions apply to every agent working in this repository.
   This exception retains early source states for matched V5 reconstruction-only
   fine-tuning in new style, new content, and both. The earliest three FT jobs
   may start once snapshot0 is atomically saved; no OOD outcome selects ages.
+- IBI-RD-HEX-S2-R1 is the 2026-11-22 authorized checkpoint continuation
+  from epoch49 for 50 additional epochs, ending at epoch99/250000 updates.
+  In the new run retain current, macro-best, best-val and the permanent
+  snapshot99 (at most four files). The parent keeps its original snapshots.
+  After successful completion, use snapshot99 for the same three V5 tasks.
 - S7 BN interventions are diagnostics only. Freeze VQ and restore every buffer,
   module mode and RNG state, including on errors; never select checkpoints using
   the small-batch intervention metrics. Do not change the training BN architecture.

@@ -1105,6 +1105,24 @@ in [V5 RQ6](../../v5/research/directions/RQ6_INDUCTIVE_BIAS_PERSISTENCE.md).
 Source50epochs runs on ws-ia/32GB/4CPU/8h; each FT10k on ws-ia/32GB/4CPU/24h.
 No new source seed replication or audio FT is implied.
 
+### IBI-RD-HEX-S2-R1 -- Continue through completed epoch 100
+
+Authorized 2026-11-22. Resume the seed-0 50-epoch replica from current epoch49,
+restoring model, optimizer, scheduler, scaler, RD calibration, histories and
+prior validation bests. The training budget is 50 additional epochs, absolute
+50–99, ending at 250,000 cumulative updates. This is an epoch-boundary resume
+with the configured seed. The parent checkpoint lacks RNG state. Teacher,
+data, objectives, optimizer and validation stay matched to S2.
+
+Retain the permanent final snapshot99, current and the two best roles in the
+new directory. The first four snapshots stay in the parent directory. Compare
+source full-validation mapping, purity, code usage and reconstruction with
+the earlier ages. Slurm releases the three matched V5 10k tasks on successful
+source completion. Evaluate transfer using that fixed final source snapshot
+and the original target metrics and templates.
+
+Config: [100-epoch continuation](../configs/hex/rd/cfg_rd_v3_hex_rank2_lr1e4_seed0_100e_r1.yaml).
+
 ## IBI-RD-HEX-S1 -- Representation-distilled image V3 source pair
 
 Authorized2026-11-20. The user selected image HEX, not the failed audio
