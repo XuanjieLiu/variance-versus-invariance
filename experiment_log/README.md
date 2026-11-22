@@ -19,8 +19,9 @@ still fails the source gate: selected1:1=.3321/.7917 despite lower recon.
 The HEX LR pair completed200epochs with best/final full-VAL1:1/purity1.0.
 Select LR1e-4 by source-val loss; continuous-leakage mismatch remains explicit.
 The 50-epoch replica312731 completed and saved snapshots0/4/19/49.
-[The authorized continuation](SETTINGS.md#ibi-rd-hex-s2-r1----continue-through-completed-epoch-100)
-resumes current49 through absolute99, followed by three matched V5 FT jobs.
+[Continuation314547](SETTINGS.md#ibi-rd-hex-s2-r1----continue-through-completed-epoch-100)
+completed absolute99 at250,000 updates. All three matched V5 FT jobs from
+permanent snapshot99 completed10k.
 The [V5 IBI plan](../../v5/research/directions/RQ6_INDUCTIVE_BIAS_PERSISTENCE.md)
 owns cross-project hypotheses; historical IBP IDs/paths remain unchanged.
 Prior entries below remain historical and are not new launch instructions.
