@@ -958,6 +958,34 @@ inspect quantizer scale, directional gradients, replacement and BN effects
 before concluding DiVeQ or low-dimensional VQ is impossible. Rank runs remain
 cancelled. No arithmetic training, existing-run changes, commit or push.
 
+## INSNOTES-UPSTREAM-STFT-S1 -- Stock audio V3 reproduction
+
+Authorized 2026-11-24. Train one fresh InsNotes K12 model from the pinned
+upstream commit bbbc7c9c26bda7170612814a407b76633cd22875 using its
+`cfg_v3_insnotes.yaml`, trainer, model, V3 loss and loader. Keep 512-bin
+log-STFT, fragment style, batch32 × 12, FP32 config, AdamW 1e-3/WD0.1,
+commitment0.1, EMA0.98, dead threshold16, 10,000 epochs/300,000 updates,
+and upstream randomized crop and frequency masking in train/val/test.
+Keep the YAML's unset training seed. The paper uses a different optimizer/VQ
+bundle and reports 99.8% K12 codebook accuracy in Table 8.
+
+Generate the 1,200 takes in a new `InsNotesUpstreamSTFTV1` directory using the
+original MIDI, renderer, features and recording split scripts. Use seed0 for
+each data generation stage. The renderer's missing `FluidR3_GM.sf2` is taken
+from Debian fluid-soundfont-gm 3.1-5.3 and hashed. Resolve contradictory
+requirements in an isolated env: NumPy 1.23.5 with SciPy 1.15.2, Pillow11.1.0
+and PyYAML6.0.2. Pin the stock torch/torchaudio/VQ versions and record pip freeze.
+
+Select the checkpoint by original validation total loss. Preserve upstream's
+top-three plus current behavior. Evaluate the selected and final states on
+one seed-0 pass of the stock test loader (120 takes/1,440 notes) and save its
+native macro codebook accuracy plus sample-weighted Hungarian one-to-one,
+purity, per-instrument accuracy and count matrix. Compare the loss-selected
+macro result to the paper's 99.8% and use Hungarian to check that high macro
+purity corresponds to one shared pitch code per class. Run only source V3.
+If 24-hour Slurm segments are needed, restore optimizer, scheduler, scaler
+and RNG at a completed epoch and preserve the original training equations.
+
 ## IBP-AUDIO-S1 -- InsNotes mel source pretraining
 
 Registered2026-11-06. One scratch seed0 mel-input V3 source run, not an OOD
