@@ -153,6 +153,10 @@ def train(run, data, segment_seconds):
         raise RuntimeError("Upstream data loader does not have 30 steps per epoch")
     if resume_path.is_file():
         resume = torch.load(resume_path, map_location="cpu")
+        with progress.open(newline="") as stream:
+            latest = list(csv.DictReader(stream))[-1]
+        if int(latest["file_epoch"]) != resume["epoch"]:
+            raise RuntimeError("Loss history advanced past the last complete Slurm resume boundary")
         saved = torch.load(run / f"cp_epoch{resume['epoch']}.pt", map_location="cpu")
         trainer.model.load_state_dict(saved["model"])
         trainer.optimizer.load_state_dict(saved["optimizer"])
@@ -229,6 +233,13 @@ def evaluate(run, data):
                 for i, name in enumerate(tester.S_LIST) if (style_labels == i).any()
             },
         }
+    best_accuracy_percent = 100 * results["loss_best"]["upstream_codebook_accuracy"]
+    results["paper_table8_k12_comparison"] = {
+        "paper_codebook_accuracy_percent": 99.8,
+        "loss_best_codebook_accuracy_percent": best_accuracy_percent,
+        "difference_percentage_points": best_accuracy_percent - 99.8,
+        "reaches_reference_at_reported_precision": round(best_accuracy_percent, 1) >= 99.8,
+    }
     write_json(run / "upstream_test_results.json", results)
     print("UPSTREAM_TEST_RESULTS", json.dumps(results), flush=True)
 
