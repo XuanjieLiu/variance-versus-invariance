@@ -986,6 +986,11 @@ purity corresponds to one shared pitch code per class. Run only source V3.
 If 24-hour Slurm segments are needed, restore optimizer, scheduler, scaler
 and RNG at a completed epoch and preserve the original training equations.
 
+2026-11-28 update after job321340 was interrupted at file epoch7570: evaluate
+the retained validation-loss best and latest checkpoints with the same stock
+test protocol. Resume from the latest checkpoint through epoch9999 only if
+the interim codebook accuracy fails to reach the paper's reported 99.8%.
+
 ## IBP-AUDIO-S1 -- InsNotes mel source pretraining
 
 Registered2026-11-06. One scratch seed0 mel-input V3 source run, not an OOD

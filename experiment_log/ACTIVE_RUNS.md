@@ -4,7 +4,6 @@ Smoke runs are intentionally excluded.
 
 | Run ID | Started (Asia/Dubai) | Slurm Job | Direction | Hypothesis | Setting | Status | Run name | Key change | Purpose / comparison |
 |---|---|---|---|---|---|---|---|---|---|
-| VVI-INSNOTES-UPSTREAM-STFT-K12 | 2026-11-24 | 321340 | Audio V3 reproduction | InsNotes K12 Table 8 | INSNOTES-UPSTREAM-STFT-S1 | running; prep321339 passed, full CUDA batch smoke passed (8.79 GiB reserved) | 20261124-1523__VVI-INSNOTES-UPSTREAM-STFT-K12 | stock STFT, 10k epochs | Original codebook accuracy versus paper99.8%, global Hungarian diagnostic |
 | VVI-HEX-K16-DIVEQ-C512S512-S0 | 2026-10-10 15:49:40 | 224397 | RQ2; RQ1 control | RQ2-H26; RQ1-H14 control | VVI-HEX-DIVEQ-S1 | running ws-l1-013;24h | 20261010-1549__VVI-HEX-K16-DIVEQ-C512S512-S0 | DiVeQ native512,C/S512; fragment,noMEAN/noRank;200epochs/500k | Quantizer-bundle comparison to20260915 Hex REPO ordinary EMA |
 | VVI-HEX-K16-DIVEQ-C4S4-S0 | 2026-10-10 15:49:40 | 224398 | RQ1-A/native-D; RQ2 | RQ1-H14; RQ2-H26 | VVI-HEX-DIVEQ-S1 | running ws-l1-009;24h | 20261010-1549__VVI-HEX-K16-DIVEQ-C4S4-S0 | DiVeQ native4,C/S4; fragment,noMEAN/noRank;200epochs/500k | Compact joint content/style capacity versus DiVeQ512; not content-only isolation |
 | VVI-RQ2-V2-C512-K26-HEXREPO-S0-R1 | 2026-09-17 13:20:17 | 197821 | RQ2 | RQ2-H23; H25a | VVI-RQ2-S10 | running ws-l1-002;24h | 20260917-1319__VVI-RQ2-V2-C512-K26-HEXREPO-S0-R1 | Current199→769;570 additional epochs; fragment; preserve optimizer/LR | 500500 cumulative steps vs parent130k and Hex500k; not LR-by-step matched |
