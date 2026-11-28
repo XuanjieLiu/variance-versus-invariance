@@ -190,22 +190,33 @@ def train(run, data, segment_seconds):
     return 0
 
 
-def evaluate(run, data):
+def evaluate(run, data, interim=False):
     import numpy as np
     from scipy.optimize import linear_sum_assignment
     from tester import Tester
     from utils.eval_utils import confusion_mtx_acc
     from utils.training_utils import setup_seed
 
-    metadata = read_json(run / "training_complete.json")
+    if interim:
+        with (run / "validation_selection.csv").open(newline="") as stream:
+            history = list(csv.DictReader(stream))
+        epochs = {
+            "loss_best": int(min(history, key=lambda row: float(row["validation_total_loss"]))["file_epoch"]),
+            "latest": int(history[-1]["file_epoch"]),
+        }
+    else:
+        metadata = read_json(run / "training_complete.json")
+        epochs = {role: metadata[f"{role}_epoch"] for role in ("loss_best", "final")}
+
+    evaluation_dir = "interim_evaluation" if interim else "evaluation"
+    output_name = "upstream_interim_test_results.json" if interim else "upstream_test_results.json"
     results = {}
-    for role in ("loss_best", "final"):
-        epoch = metadata[f"{role}_epoch"]
+    for role, epoch in epochs.items():
         cfg = stock_config(run, data)
         cfg["active_checkpoint"] = str(run / f"cp_epoch{epoch}.pt")
         setup_seed(0)
         tester = Tester(cfg)
-        tester.output_dir = str(run / "evaluation" / role)
+        tester.output_dir = str(run / evaluation_dir / role)
         tester.prepare_data()
         tester.build_model()
         tester.test(confusion_mtx=True)
@@ -233,14 +244,16 @@ def evaluate(run, data):
                 for i, name in enumerate(tester.S_LIST) if (style_labels == i).any()
             },
         }
-    best_accuracy_percent = 100 * results["loss_best"]["upstream_codebook_accuracy"]
-    results["paper_table8_k12_comparison"] = {
-        "paper_codebook_accuracy_percent": 99.8,
-        "loss_best_codebook_accuracy_percent": best_accuracy_percent,
-        "difference_percentage_points": best_accuracy_percent - 99.8,
-        "reaches_reference_at_reported_precision": round(best_accuracy_percent, 1) >= 99.8,
-    }
-    write_json(run / "upstream_test_results.json", results)
+    comparison = {"paper_codebook_accuracy_percent": 99.8}
+    for role in epochs:
+        accuracy_percent = 100 * results[role]["upstream_codebook_accuracy"]
+        comparison[role] = {
+            "codebook_accuracy_percent": accuracy_percent,
+            "difference_percentage_points": accuracy_percent - 99.8,
+            "reaches_reference_at_reported_precision": round(accuracy_percent, 1) >= 99.8,
+        }
+    results["paper_table8_k12_comparison"] = comparison
+    write_json(run / output_name, results)
     print("UPSTREAM_TEST_RESULTS", json.dumps(results), flush=True)
 
 
@@ -255,6 +268,8 @@ def main():
         item.add_argument("data", type=Path)
         if command == "train":
             item.add_argument("--segment-seconds", type=int, default=20 * 3600)
+        if command == "evaluate":
+            item.add_argument("--interim", action="store_true")
     item = sub.add_parser("audit")
     item.add_argument("data", type=Path)
     item.add_argument("soundfont_file", type=Path)
@@ -267,7 +282,10 @@ def main():
         sys.path.insert(0, str(Path.cwd()))
         if args.command == "train":
             raise SystemExit(train(args.run, args.data, args.segment_seconds))
-        (smoke if args.command == "smoke" else evaluate)(args.run, args.data)
+        if args.command == "smoke":
+            smoke(args.run, args.data)
+        else:
+            evaluate(args.run, args.data, interim=args.interim)
 
 
 if __name__ == "__main__":
